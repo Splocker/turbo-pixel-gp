@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Turbo Pixel GP</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #24122f;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #screen {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background: #24122f;
+      box-shadow: 0 0 0 4px #754098, 0 0 0 8px #1a1024;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="screen" width="480" height="270"></canvas>
+  <script src="js/util.js"></script>
+  <script src="js/font.js"></script>
+  <script src="js/track.js"></script>
+  <script src="js/car.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/race.js"></script>
+  <script src="js/scores.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
