@@ -1,13 +1,14 @@
 'use strict';
 
-const CAR_MAX_SPEED = 300;    // px/s on asphalt
-const CAR_ACCEL = 240;
-const CAR_BRAKE = 520;
-const CAR_REVERSE_MAX = 90;
-const CAR_STEER_RATE = 3.4;   // rad/s at low speed
-const CAR_STEER_FALLOFF = 0.6; // fraction of steering lost at top speed
-const CAR_GRIP = 9;           // how quickly sideways slide is scrubbed off
-const GRASS_SPEED = 0.42;
+const CAR_SPEED = 250;        // the one cruising speed, px/s
+const CAR_ACCEL = 1200;       // high enough that W feels like instant full speed
+const CAR_COAST = 150;
+const CAR_BRAKE = 700;
+const CAR_REVERSE_MAX = 110;
+const CAR_STEER_RATE = 3.2;   // rad/s, the same at every speed above a crawl
+const CAR_GRIP = 12;          // how quickly sideways slide is scrubbed off
+const CAR_BOOST = 1.3;
+const CAR_BOOST_TIME = 1.2;
 const CAR_RADIUS = 4.2;       // collision shape: two circles along the car's length
 const CAR_CIRCLE_OFFSET = 3.5;
 
@@ -17,17 +18,18 @@ class Car {
     this.body = body;
     this.stripe = stripe;
     this.isPlayer = isPlayer;
+    this.mass = isPlayer ? 1.4 : 1; // the player shoves harder than they get shoved
     this.x = 0;
     this.y = 0;
     this.angle = 0;
     this.vx = 0;
     this.vy = 0;
     this.speedFactor = 1;
-    this.boost = 1;
-    this.input = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+    this.boostTimer = 0;
+    this.oilCooldown = 0;
+    this.input = { throttle: 0, brake: 0, steer: 0 };
     this.spinTimer = 0;
     this.spinRate = 0;
-    this.surface = 'road';
     this.skidding = false;
     this.ai = null;
 
@@ -57,6 +59,10 @@ class Car {
     return this.lapTimes.length ? Math.min(...this.lapTimes) : null;
   }
 
+  get topSpeed() {
+    return CAR_SPEED * this.speedFactor * (this.boostTimer > 0 ? CAR_BOOST : 1);
+  }
+
   place(x, y, angle) {
     this.x = x;
     this.y = y;
@@ -65,9 +71,11 @@ class Car {
     this.vy = 0;
     this.spinTimer = 0;
     this.spinRate = 0;
+    this.boostTimer = 0;
   }
 
   spinOut(duration, rate) {
+    if (this.isPlayer) duration *= 0.7;
     if (this.spinTimer <= 0) this.spinRate = rate;
     this.spinTimer = Math.max(this.spinTimer, duration);
   }
@@ -77,39 +85,29 @@ class Car {
     let vF = this.vx * cos + this.vy * sin;
     let vL = -this.vx * sin + this.vy * cos;
     const inp = this.input;
-    const onGrass = this.surface === 'grass';
-    const maxSp = CAR_MAX_SPEED * this.speedFactor * this.boost * (onGrass ? GRASS_SPEED : 1);
+    const maxSp = this.topSpeed;
     let grip = CAR_GRIP;
     let turn = 0;
+    this.boostTimer = Math.max(0, this.boostTimer - dt);
+    this.oilCooldown = Math.max(0, this.oilCooldown - dt);
 
     if (this.spinTimer > 0) {
       // Loss of control: inputs ignored, the car rotates and slides.
       this.spinTimer -= dt;
       turn = this.spinRate;
-      this.spinRate *= Math.exp(-1.5 * dt);
-      vF -= vF * 1.4 * dt;
-      grip = 1.5;
+      this.spinRate *= Math.exp(-2 * dt);
+      vF -= vF * 1.2 * dt;
+      grip = 2;
     } else {
-      if (inp.throttle > 0) {
-        if (vF < -5) vF = Math.min(0, vF + CAR_BRAKE * inp.throttle * dt);
-        else if (vF < maxSp) vF += inp.throttle * CAR_ACCEL * (1 - 0.8 * Math.max(0, vF) / maxSp) * dt;
-      }
+      if (inp.throttle > 0 && vF < maxSp) vF = Math.min(maxSp, vF + CAR_ACCEL * inp.throttle * dt);
       if (inp.brake > 0) {
         if (vF > 5) vF = Math.max(0, vF - CAR_BRAKE * inp.brake * dt);
-        else if (vF > -CAR_REVERSE_MAX) vF -= CAR_ACCEL * 0.6 * inp.brake * dt;
+        else if (vF > -CAR_REVERSE_MAX) vF -= 300 * inp.brake * dt;
       }
-      if (!inp.throttle && !inp.brake) vF -= Math.sign(vF) * Math.min(Math.abs(vF), 60 * dt);
-      if (vF > maxSp) vF -= (vF - maxSp) * 3 * dt;
-      vF -= vF * 0.05 * dt;
+      if (!inp.throttle && !inp.brake) vF -= Math.sign(vF) * Math.min(Math.abs(vF), CAR_COAST * dt);
+      if (vF > maxSp) vF -= (vF - maxSp) * 3 * dt; // bleed off boost and bumper kicks
 
-      const sp = Math.abs(vF);
-      let rate = CAR_STEER_RATE * (1 - CAR_STEER_FALLOFF * Math.min(1, sp / CAR_MAX_SPEED)) * Math.min(1, sp / 50);
-      if (inp.handbrake && sp > 20) {
-        grip = 1.8;
-        rate *= 1.35;
-        vF -= vF * 0.9 * dt;
-      }
-      if (onGrass) grip *= 0.6;
+      const rate = CAR_STEER_RATE * Math.min(1, Math.abs(vF) / 40);
       turn = inp.steer * rate * Math.sign(vF);
     }
 
@@ -119,6 +117,6 @@ class Car {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
     this.angle = wrapAngle(this.angle + turn * dt);
-    this.skidding = (Math.abs(vL) > 45 || this.spinTimer > 0 || (inp.handbrake && Math.abs(vF) > 60)) && !onGrass;
+    this.skidding = Math.abs(vL) > 45 || this.spinTimer > 0;
   }
 }

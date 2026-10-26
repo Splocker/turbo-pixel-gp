@@ -1,21 +1,20 @@
 'use strict';
 
-const TRACK_HALF_WIDTH = 36;
+const TRACK_HALF_WIDTH = 48;
 const TRACK_SPACING = 6; // distance between centerline samples, in pixels
 const KERB_WIDTH = 5;
-const WORLD_MARGIN = 280;
+const WALL_WIDTH = 6;    // bouncy barrier just outside the kerb
+const WORLD_MARGIN = 150;
 
-// Control points of the circuit, driven in this order. The first four are collinear so the
+// Control points of the circuit, driven in this order. The first three are collinear so the
 // start/finish straight is perfectly straight.
 const TRACK_CONTROL = [
-  [500, 300], [1000, 300], [1500, 300], [2000, 300],
-  [2350, 400], [2480, 700], [2330, 1000], [1980, 1060],
-  [1720, 900], [1420, 850], [1160, 1000], [1150, 1300],
-  [1400, 1500], [1800, 1540], [1960, 1740], [1760, 1900],
-  [1100, 1880], [520, 1820], [260, 1560], [260, 1160],
-  [460, 900], [300, 640], [330, 400],
+  [250, 150], [600, 150], [950, 150],
+  [1140, 200], [1220, 360], [1180, 540],
+  [1040, 660], [860, 680], [720, 590], [560, 600],
+  [430, 740], [250, 760], [120, 620], [110, 400], [150, 220],
 ];
-const TRACK_START = [1450, 300];
+const TRACK_START = [820, 150];
 
 // Centripetal Catmull-Rom (no overshoot or cusps with uneven point spacing).
 function catmullRom(p0, p1, p2, p3, u) {
@@ -37,21 +36,6 @@ function catmullRom(p0, p1, p2, p3, u) {
   return mix(b1, b2, t1, t2);
 }
 
-// Projected Gauss-Seidel on lateral offsets, minimizing squared curvature of the line.
-function optimizeLine(cx, cy, nx, ny, off, limit, iterations) {
-  const n = off.length;
-  for (let it = 0; it < iterations; it++) {
-    for (let i = 0; i < n; i++) {
-      const i1 = (i + n - 1) % n, i2 = (i + n - 2) % n, j1 = (i + 1) % n, j2 = (i + 2) % n;
-      const px = (k) => cx[k] + nx[k] * off[k];
-      const py = (k) => cy[k] + ny[k] * off[k];
-      const tx = (-px(i2) + 4 * px(i1) + 4 * px(j1) - px(j2)) / 6;
-      const ty = (-py(i2) + 4 * py(i1) + 4 * py(j1) - py(j2)) / 6;
-      off[i] = clamp((tx - cx[i]) * nx[i] + (ty - cy[i]) * ny[i], -limit, limit);
-    }
-  }
-}
-
 function curvatureOf(xs, ys, k) {
   const n = xs.length;
   const heading = new Float32Array(n);
@@ -71,7 +55,6 @@ function curvatureOf(xs, ys, k) {
 class Track {
   constructor() {
     this.buildCenterline();
-    this.buildRacingLine();
     this.buildScenery();
   }
 
@@ -155,56 +138,23 @@ class Track {
     }
   }
 
-  buildRacingLine() {
-    const n = this.n;
-    const limit = TRACK_HALF_WIDTH - 10;
-
-    // Solve coarse first (fast convergence over long corners), then refine at full resolution.
-    const stride = 8;
-    const cn = Math.floor(n / stride);
-    const pick = (arr) => Float32Array.from({ length: cn }, (_, k) => arr[k * stride]);
-    const coarse = new Float32Array(cn);
-    optimizeLine(pick(this.x), pick(this.y), pick(this.nx), pick(this.ny), coarse, limit, 1500);
-
-    const off = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const k = Math.floor(i / stride) % cn, k2 = (k + 1) % cn;
-      off[i] = lerp(coarse[k], coarse[k2], (i % stride) / stride);
-    }
-    optimizeLine(this.x, this.y, this.nx, this.ny, off, limit, 200);
-
-    this.lineOff = off;
-    this.lineX = new Float32Array(n);
-    this.lineY = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      this.lineX[i] = this.x[i] + this.nx[i] * off[i];
-      this.lineY[i] = this.y[i] + this.ny[i] * off[i];
-    }
-    this.lineCurv = curvatureOf(this.lineX, this.lineY, 3);
-  }
-
   buildScenery() {
-    const HW = TRACK_HALF_WIDTH;
+    const edge = TRACK_HALF_WIDTH + KERB_WIDTH + WALL_WIDTH;
     // Grandstand above the start straight (the straight is the topmost part of the circuit).
     const sx = this.x[0], sy = this.y[0];
-    this.grandstand = { x: sx - 230, y: sy - HW - 74, w: 400, h: 40 };
+    this.grandstand = { x: sx - 330, y: sy - edge - 52, w: 400, h: 40 };
 
+    // Trees are decoration only: the walls keep every car on the circuit.
     const rng = makeRng(1337);
     this.trees = [];
     const gs = this.grandstand;
-    for (let tries = 0; tries < 4000 && this.trees.length < 220; tries++) {
+    for (let tries = 0; tries < 3000 && this.trees.length < 110; tries++) {
       const x = 24 + rng() * (this.worldW - 48);
       const y = 24 + rng() * (this.worldH - 48);
       if (x > gs.x - 20 && x < gs.x + gs.w + 20 && y > gs.y - 20 && y < gs.y + gs.h + 20) continue;
-      if (this.distanceFromCenter(x, y) < HW + 70) continue;
+      if (this.distanceFromCenter(x, y) < edge + 26) continue;
       if (this.trees.some((t) => Math.hypot(t.x - x, t.y - y) < 16)) continue;
       this.trees.push({ x, y, r: 5 });
-    }
-    this.treeGrid = new Map();
-    for (const t of this.trees) {
-      const key = Math.floor(t.x / 64) + ',' + Math.floor(t.y / 64);
-      if (!this.treeGrid.has(key)) this.treeGrid.set(key, []);
-      this.treeGrid.get(key).push(t);
     }
   }
 
@@ -243,12 +193,9 @@ class Track {
     return Math.hypot(x - this.x[i], y - this.y[i]);
   }
 
-  surfaceAt(x, y) {
-    const i = this.nearestGlobal(x, y);
-    const d = Math.abs(this.lateral(x, y, i));
-    if (d <= TRACK_HALF_WIDTH) return 'road';
-    if (d <= TRACK_HALF_WIDTH + KERB_WIDTH) return 'kerb';
-    return 'grass';
+  // Sample index for a distance along the lap.
+  indexAt(d) {
+    return this.wrap(Math.round(d / this.spacing));
   }
 
   // Pose of a grid slot: two staggered columns behind the start line, pole on the left.
@@ -256,7 +203,7 @@ class Track {
     const row = Math.floor(slot / 2), col = slot % 2;
     const back = 34 + row * 26 + col * 13;
     const i = this.wrap(Math.round((this.length - back) / this.spacing));
-    const lat = col === 0 ? -14 : 14;
+    const lat = col === 0 ? -18 : 18;
     return {
       idx: i,
       x: this.x[i] + this.nx[i] * lat,

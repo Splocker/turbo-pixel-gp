@@ -3,6 +3,8 @@
 const STEP = 1 / 60;
 const ATTRACT_OPPONENTS = 7;
 const ENTER = ['Enter', 'NumpadEnter'];
+const TALLY_STEP = 0.3;   // results screen: one score line every TALLY_STEP seconds
+const TALLY_TIME = 2.2;   // when the whole tally, including the total, has counted up
 const BLOCKED_KEYS = new Set(['Space', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab']);
 
 class Game {
@@ -29,6 +31,7 @@ class Game {
     this.highlight = -1;
     this.nameBuffer = '';
     this.resetCooldown = 0;
+    this.shake = 0;
 
     this.bindInput();
     this.fit();
@@ -101,6 +104,7 @@ class Game {
       }
     }
     this.updateCamera(dt, false);
+    this.shake = Math.max(0, this.shake - dt * 14);
     this.render();
 
     this.pressed.length = 0;
@@ -148,7 +152,9 @@ class Game {
         break;
 
       case 'results':
-        if (this.stateTime > 0.3 && this.isPressed(...ENTER)) {
+        if (this.isPressed(...ENTER) && this.stateTime < TALLY_TIME) {
+          this.stateTime = TALLY_TIME; // skip the count-up
+        } else if (this.stateTime > TALLY_TIME + 0.3 && this.isPressed(...ENTER)) {
           if (this.result.qualifies) {
             this.nameBuffer = (this.settings.lastName || '').slice(0, NAME_MAX);
             this.setState('nameEntry');
@@ -203,6 +209,8 @@ class Game {
           'LAST ' + formatTime(e.car.lapTimes[e.car.lapTimes.length - 1]));
       } else if (e.type === 'finish' && e.car.isPlayer) {
         this.onPlayerFinish(e.car);
+      } else if (e.type === 'bump') {
+        this.shake = Math.max(this.shake, e.big ? 4 : 2);
       }
     }
     race.events.length = 0;
@@ -217,7 +225,6 @@ class Game {
     const racing = this.state === 'race';
     p.input.throttle = racing && k.has('KeyW') ? 1 : 0;
     p.input.brake = racing && k.has('KeyS') ? 1 : 0;
-    p.input.handbrake = racing && k.has('Space');
     const target = racing ? (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) : 0;
     const rate = (target === 0 ? 10 : 7) * dt;
     p.input.steer += clamp(target - p.input.steer, -rate, rate);
@@ -225,14 +232,16 @@ class Game {
 
   onPlayerFinish(player) {
     // The car keeps lapping on autopilot behind the result screens.
-    player.ai = new AIDriver(player, this.track, Math.random, { speedFactor: 0.85, cornerFactor: 0.9 });
+    player.ai = new AIDriver(player, this.track, Math.random, { speedFactor: 0.85 });
     this.result = {
+      score: this.race.scoreTotal,
+      breakdown: { ...this.race.score },
       time: player.finishTime,
-      bestLap: player.bestLap,
       place: player.finishOrder,
       opponents: this.race.cars.length - 1,
     };
-    this.result.qualifies = scoreQualifies(this.scores, this.result.time);
+    this.result.qualifies = scoreQualifies(this.scores, this.result.score);
+    this.shake = 0;
     this.flash = null;
     this.setState('finished');
   }
@@ -240,7 +249,7 @@ class Game {
   saveScore() {
     const name = this.nameBuffer.trim() || 'PLAYER';
     const r = this.result;
-    const entry = { name, time: r.time, bestLap: r.bestLap, place: r.place, opponents: r.opponents, date: Date.now() };
+    const entry = { name, score: r.score, place: r.place, opponents: r.opponents, date: Date.now() };
     this.highlight = insertHighScore(this.scores, entry);
     saveHighScores(this.scores);
     this.settings.lastName = name;
@@ -273,7 +282,9 @@ class Game {
 
   render() {
     const r = this.renderer;
-    r.drawWorld(this.race, this.cam.x, this.cam.y);
+    const sx = this.shake ? (Math.random() - 0.5) * 2 * this.shake : 0;
+    const sy = this.shake ? (Math.random() - 0.5) * 2 * this.shake : 0;
+    r.drawWorld(this.race, clamp(this.cam.x + sx, 0, this.track.worldW - VIEW_W), clamp(this.cam.y + sy, 0, this.track.worldH - VIEW_H));
     switch (this.state) {
       case 'title': r.dim(); this.drawTitle(); break;
       case 'setup': r.dim(); this.drawSetup(); break;
@@ -314,7 +325,8 @@ class Game {
     this.drawLogo(12);
     if (this.blink()) drawText(ctx, 'PRESS ENTER TO START', VIEW_W / 2, 98, PAL.white, 1, 'center', PAL.black);
     this.drawScoreTable(100, 112, 280, -1);
-    drawText(ctx, 'W GAS  S BRAKE  A/D STEER  SPACE HANDBRAKE  R RESET  ESC PAUSE', VIEW_W / 2, VIEW_H - 12, PAL.purpleLight, 1, 'center', PAL.black);
+    drawText(ctx, 'BUMP RIVALS  GRAB COINS  HIT BOOSTS  DODGE THE OIL', VIEW_W / 2, VIEW_H - 24, PAL.lime, 1, 'center', PAL.black);
+    drawText(ctx, 'W GAS   S BRAKE   A/D STEER   R RESET   ESC PAUSE', VIEW_W / 2, VIEW_H - 12, PAL.purpleLight, 1, 'center', PAL.black);
   }
 
   drawScoreTable(x, y, w, highlight) {
@@ -322,8 +334,8 @@ class Game {
     const h = 22 + SCORE_LIMIT * 10;
     drawPanel(ctx, x, y, w, h);
     drawText(ctx, 'HIGH SCORES', x + w / 2, y + 4, PAL.orange, 1, 'center');
-    const cols = [x + 6, x + 26, x + 90, x + 150, x + 212];
-    ['#', 'NAME', 'TIME', 'BEST LAP', 'FIELD'].forEach((t, k) => drawText(ctx, t, cols[k], y + 14, PAL.lime));
+    const cols = [x + 6, x + 26, x + 100, x + 170];
+    ['#', 'NAME', 'SCORE', 'PLACE'].forEach((t, k) => drawText(ctx, t, cols[k], y + 14, PAL.lime));
     if (!this.scores.length) {
       drawText(ctx, 'NO RECORDS YET - SET THE FIRST!', x + w / 2, y + 60, PAL.white, 1, 'center');
       return;
@@ -338,9 +350,8 @@ class Game {
       const color = hl ? PAL.orange : k === 0 ? PAL.yellow : PAL.white;
       drawText(ctx, String(k + 1), cols[0], ry, color);
       drawText(ctx, s.name, cols[1], ry, color);
-      drawText(ctx, formatTime(s.time), cols[2], ry, color);
-      drawText(ctx, formatTime(s.bestLap), cols[3], ry, color);
-      drawText(ctx, ordinal(s.place || 1) + '/' + ((s.opponents || 0) + 1), cols[4], ry, color);
+      drawText(ctx, String(s.score), cols[2], ry, color);
+      drawText(ctx, ordinal(s.place || 1) + ' OF ' + ((s.opponents || 0) + 1), cols[3], ry, color);
     });
   }
 
@@ -357,7 +368,7 @@ class Game {
     const arrowColor = this.blink(1) ? PAL.white : PAL.purpleLight;
     if (this.opponents > 1) drawText(ctx, '<', cx - 50, y + 60, arrowColor, 3, 'center');
     if (this.opponents < MAX_OPPONENTS) drawText(ctx, '>', cx + 50, y + 60, arrowColor, 3, 'center');
-    drawText(ctx, 'LAPS: ' + RACE_LAPS + '    YOU START AT THE BACK', cx, y + 94, PAL.white, 1, 'center');
+    drawText(ctx, 'LAPS: ' + RACE_LAPS + '    MORE RIVALS = MORE POINTS', cx, y + 94, PAL.white, 1, 'center');
 
     // Grid preview: the player's car plus one icon per opponent.
     const icons = [PLAYER_LIVERY, ...AI_LIVERIES.slice(0, this.opponents)];
@@ -380,9 +391,6 @@ class Game {
       drawText(ctx, this.flash.text, VIEW_W / 2, 92, this.flash.color, 3, 'center', PAL.black);
       if (this.flash.sub) drawText(ctx, this.flash.sub, VIEW_W / 2, 118, PAL.white, 1, 'center', PAL.black);
     }
-    if (this.state === 'race' && race.player.lostTimer > 1.2) {
-      drawText(ctx, 'R TO RESET', VIEW_W / 2, 92, PAL.white, 1, 'center', PAL.black);
-    }
   }
 
   drawPaused() {
@@ -395,55 +403,82 @@ class Game {
 
   drawFinished() {
     const ctx = this.ctx, cx = VIEW_W / 2, r = this.result;
+    const [headline, color] = r.place === 1 ? ['YOU WIN!', PAL.yellow] : r.place <= 3 ? ['PODIUM!', PAL.lime] : ['NICE DRIVING!', PAL.orange];
     drawPanel(ctx, cx - 130, 70, 260, 104, PAL.purpleDeep);
     this.drawChecker(cx - 126, 74, 252, 4, 2);
-    drawText(ctx, 'FINISH!', cx, 88, PAL.lime, 4, 'center', PAL.black);
-    const placeColor = r.place === 1 ? PAL.yellow : PAL.orange;
-    drawText(ctx, 'YOU FINISHED ' + ordinal(r.place), cx, 124, placeColor, 2, 'center', PAL.black);
-    drawText(ctx, 'TIME ' + formatTime(r.time) + '   BEST LAP ' + formatTime(r.bestLap), cx, 144, PAL.white, 1, 'center');
+    drawText(ctx, headline, cx, 88, color, headline.length > 8 ? 3 : 4, 'center', PAL.black);
+    drawText(ctx, ordinal(r.place) + ' OF ' + (r.opponents + 1), cx, 124, PAL.white, 2, 'center', PAL.black);
+    drawText(ctx, 'SCORE ' + r.score + '   TIME ' + formatTime(r.time), cx, 144, PAL.orange, 1, 'center');
     this.drawChecker(cx - 126, 162, 252, 4, 2);
     if (this.stateTime > 1.5 && this.blink()) drawText(ctx, 'PRESS ENTER', cx, 182, PAL.white, 1, 'center', PAL.black);
   }
 
+  // Standings on the left, the player's score counting up line by line on the right.
   drawResults() {
-    const ctx = this.ctx, cx = VIEW_W / 2, race = this.race;
+    const ctx = this.ctx, race = this.race, r = this.result;
     const rows = race.standings;
     const rh = rows.length > 12 ? 9 : 11;
-    const h = 34 + rows.length * rh + 16;
+    const h = Math.max(150, 30 + rows.length * rh + 6);
     const y = Math.max(4, Math.round((VIEW_H - h) / 2));
-    const x = 70, w = 340;
+    const x = 16, w = 180;
     drawPanel(ctx, x, y, w, h);
-    drawText(ctx, 'RACE RESULTS', cx, y + 5, PAL.orange, 2, 'center', PAL.black);
-    const cols = [x + 8, x + 34, x + 46, x + 150, x + 230];
-    ['POS', '', 'DRIVER', 'TIME', 'BEST LAP'].forEach((t, k) => drawText(ctx, t, cols[k], y + 23, PAL.lime));
+    drawText(ctx, 'STANDINGS', x + w / 2, y + 6, PAL.orange, 1, 'center');
     rows.forEach((car, k) => {
-      const ry = y + 34 + k * rh;
+      const ry = y + 22 + k * rh;
       const color = car.isPlayer ? PAL.orange : PAL.white;
       if (car.isPlayer) {
         ctx.fillStyle = PAL.purple;
         ctx.fillRect(x + 2, ry - 1, w - 4, rh);
       }
-      drawText(ctx, ordinal(car.position), cols[0], ry, color);
+      drawText(ctx, ordinal(car.position), x + 6, ry, color);
       ctx.fillStyle = PAL.black;
-      ctx.fillRect(cols[1], ry, 7, 7);
+      ctx.fillRect(x + 36, ry, 7, 7);
       ctx.fillStyle = car.body;
-      ctx.fillRect(cols[1] + 1, ry + 1, 5, 5);
-      drawText(ctx, car.name, cols[2], ry, color);
-      const t = car.finished ? formatTime(car.finishTime) : 'LAP ' + Math.min(RACE_LAPS, car.lapsCompleted + 1) + '/' + RACE_LAPS;
-      drawText(ctx, t, cols[3], ry, car.finished ? color : PAL.purpleLight);
-      drawText(ctx, formatTime(car.bestLap), cols[4], ry, color);
+      ctx.fillRect(x + 37, ry + 1, 5, 5);
+      drawText(ctx, car.name, x + 48, ry, color);
+      const t = car.finished ? formatTime(car.finishTime) : 'LAP ' + Math.min(RACE_LAPS, car.lapsCompleted + 1);
+      drawText(ctx, t, x + w - 6, ry, car.finished ? color : PAL.purpleLight, 1, 'right');
     });
-    const footY = y + h - 12;
-    if (this.result.qualifies && this.blink()) drawText(ctx, 'NEW HIGH SCORE!', x + 8, footY, PAL.lime);
-    drawText(ctx, 'ENTER CONTINUE', x + w - 8, footY, PAL.white, 1, 'right');
+
+    const tx = 210, tw = 254, ty = Math.round((VIEW_H - 196) / 2);
+    drawPanel(ctx, tx, ty, tw, 196);
+    drawText(ctx, 'YOUR SCORE', tx + tw / 2, ty + 8, PAL.orange, 2, 'center', PAL.black);
+    const b = r.breakdown;
+    const lines = [
+      ['BUMPS', b.bumps],
+      ['COINS + STUFF', b.pickups],
+      [ordinal(r.place) + ' PLACE', b.place],
+      ['BEAT ' + (r.opponents + 1 - r.place) + ' RIVALS', b.field],
+      ['TIME BONUS', b.time],
+    ];
+    const t = this.stateTime;
+    const count = (value, start) => Math.round(value * clamp((t - start) / TALLY_STEP, 0, 1));
+    lines.forEach(([label, value], k) => {
+      const start = TALLY_STEP * (k + 1);
+      if (t < start) return;
+      const ly = ty + 36 + k * 16;
+      drawText(ctx, label, tx + 12, ly, PAL.lime);
+      drawText(ctx, String(count(value, start)), tx + tw - 12, ly, PAL.white, 1, 'right');
+    });
+    const totalStart = TALLY_STEP * (lines.length + 1);
+    if (t >= totalStart) {
+      ctx.fillStyle = PAL.purple;
+      ctx.fillRect(tx + 10, ty + 120, tw - 20, 1);
+      drawText(ctx, 'TOTAL', tx + 12, ty + 130, PAL.orange, 2);
+      drawText(ctx, String(count(r.score, totalStart)), tx + tw - 12, ty + 130, PAL.yellow, 2, 'right', PAL.black);
+    }
+    if (t >= TALLY_TIME) {
+      if (r.qualifies && this.blink()) drawText(ctx, 'NEW HIGH SCORE!', tx + tw / 2, ty + 158, PAL.lime, 1, 'center');
+      drawText(ctx, 'ENTER CONTINUE', tx + tw / 2, ty + 178, PAL.white, 1, 'center');
+    }
   }
 
   drawNameEntry() {
     const ctx = this.ctx, cx = VIEW_W / 2, r = this.result;
     drawPanel(ctx, 70, 40, 340, 180);
     drawText(ctx, 'NEW HIGH SCORE!', cx, 52, PAL.orange, 2, 'center', PAL.black);
-    const rank = this.scores.filter((s) => s.time <= r.time).length + 1;
-    drawText(ctx, 'RANK #' + rank + '    TIME ' + formatTime(r.time) + '    ' + ordinal(r.place) + ' PLACE', cx, 76, PAL.white, 1, 'center');
+    const rank = this.scores.filter((s) => s.score >= r.score).length + 1;
+    drawText(ctx, 'RANK #' + rank + '    SCORE ' + r.score + '    ' + ordinal(r.place) + ' PLACE', cx, 76, PAL.white, 1, 'center');
     drawText(ctx, 'ENTER YOUR NAME', cx, 100, PAL.lime, 1, 'center');
 
     const boxW = 24, total = NAME_MAX * boxW, bx = cx - total / 2;
@@ -466,7 +501,7 @@ class Game {
     drawText(ctx, 'HALL OF FAME', cx, 20, PAL.orange, 3, 'center', PAL.black);
     this.drawScoreTable(100, 56, 280, this.highlight);
     if (this.result && !this.result.qualifies) {
-      drawText(ctx, 'YOUR TIME ' + formatTime(this.result.time) + ' - NOT FAST ENOUGH THIS TIME!', cx, 192, PAL.white, 1, 'center', PAL.black);
+      drawText(ctx, 'YOU SCORED ' + this.result.score + ' - SO CLOSE! ONE MORE GO?', cx, 192, PAL.white, 1, 'center', PAL.black);
     }
     drawText(ctx, 'ENTER RACE AGAIN    ESC MENU', cx, VIEW_H - 24, PAL.white, 1, 'center', PAL.black);
   }

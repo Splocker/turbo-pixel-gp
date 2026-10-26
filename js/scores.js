@@ -1,6 +1,6 @@
 'use strict';
 
-const SCORE_KEY = 'turboPixelGP.highScores.v1';
+const SCORE_KEY = 'turboPixelGP.highScores.v2';
 const SETTINGS_KEY = 'turboPixelGP.settings.v1';
 const SCORE_LIMIT = 10;
 const NAME_MAX = 8;
@@ -11,8 +11,8 @@ function loadHighScores() {
     const list = JSON.parse(localStorage.getItem(SCORE_KEY));
     if (!Array.isArray(list)) return [];
     return list
-      .filter((e) => e && typeof e.name === 'string' && isFinite(e.time))
-      .sort((a, b) => a.time - b.time)
+      .filter((e) => e && typeof e.name === 'string' && isFinite(e.score))
+      .sort((a, b) => b.score - a.score)
       .slice(0, SCORE_LIMIT);
   } catch (e) {
     return [];
@@ -27,14 +27,14 @@ function saveHighScores(list) {
   }
 }
 
-function scoreQualifies(list, time) {
-  return list.length < SCORE_LIMIT || time < list[list.length - 1].time;
+function scoreQualifies(list, score) {
+  return score > 0 && (list.length < SCORE_LIMIT || score > list[list.length - 1].score);
 }
 
 // Inserts the entry, trims the table, and returns the entry's rank index (or -1 if it fell off).
 function insertHighScore(list, entry) {
   list.push(entry);
-  list.sort((a, b) => a.time - b.time);
+  list.sort((a, b) => b.score - a.score);
   list.splice(SCORE_LIMIT);
   return list.indexOf(entry);
 }

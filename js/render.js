@@ -87,6 +87,74 @@ function buildTreeSprite() {
   });
 }
 
+function buildTyreSprite() {
+  return buildRoundSprite(TYRE_RADIUS, (x, y, d) => {
+    if (d > TYRE_RADIUS - 1.2) return PAL.black;
+    if (d > 3.2) return x + y < 0 ? PAL.asphaltLight : PAL.asphalt;
+    if (d > 1.6) return PAL.black;
+    return PAL.white;
+  });
+}
+
+function buildBumperSprite(lit) {
+  return buildRoundSprite(BUMPER_RADIUS + 1, (x, y, d) => {
+    if (d > BUMPER_RADIUS) return PAL.black;
+    if (d > BUMPER_RADIUS - 2.5) return lit ? PAL.orange : PAL.purple;
+    if (d > 2.5) return lit ? PAL.yellow : x + y < -2 ? PAL.lime : PAL.limeDark;
+    return PAL.white;
+  });
+}
+
+// Hazard-striped block for the sliding bumpers.
+function buildSliderSprite(lit) {
+  const s = SLIDER_RADIUS * 2;
+  const cv = makeCanvas(s + 2, s + 2);
+  const g = cv.getContext('2d');
+  g.fillStyle = PAL.black;
+  g.fillRect(0, 0, s + 2, s + 2);
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      g.fillStyle = Math.floor((x + y) / 4) % 2 ? PAL.black : lit ? PAL.orange : PAL.yellow;
+      g.fillRect(x + 1, y + 1, 1, 1);
+    }
+  }
+  g.fillStyle = PAL.purple;
+  g.fillRect(6, 6, s - 10, s - 10);
+  g.fillStyle = PAL.white;
+  g.fillRect(8, 8, 2, 2);
+  return cv;
+}
+
+function buildConeSprite() {
+  const rows = ['..o..', '.ooo.', '.www.', 'ooooo', 'kkkkk'];
+  const colors = { o: PAL.orange, w: PAL.white, k: PAL.black };
+  const cv = makeCanvas(5, 5);
+  const g = cv.getContext('2d');
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === '.') return;
+    g.fillStyle = colors[ch];
+    g.fillRect(x, y, 1, 1);
+  }));
+  return cv;
+}
+
+// Two frames: face-on and edge-on, alternated so the coin appears to spin.
+function buildCoinSprites() {
+  const face = buildRoundSprite(COIN_RADIUS - 1, (x, y, d) => {
+    if (d > COIN_RADIUS - 2) return PAL.orangeDark;
+    if (x < -1 && y < -1) return PAL.white;
+    return PAL.yellow;
+  });
+  const edge = makeCanvas(face.width, face.height);
+  const g = edge.getContext('2d');
+  const cx = Math.floor(face.width / 2);
+  g.fillStyle = PAL.orangeDark;
+  g.fillRect(cx - 1, 0, 3, face.height);
+  g.fillStyle = PAL.yellow;
+  g.fillRect(cx, 1, 1, face.height - 2);
+  return [face, edge];
+}
+
 // Pre-render the whole circuit once. Shapes are drawn with canvas paths, then every pixel is
 // snapped to the nearest palette color, which removes anti-aliasing and gives hard 8-bit edges.
 function buildTrackCanvas(track) {
@@ -99,6 +167,38 @@ function buildTrackCanvas(track) {
     g.fillStyle = (y / 32) % 2 ? PAL.limeMid : PAL.lime;
     g.fillRect(0, y, W, 32);
   }
+
+  const loop = (offset) => {
+    g.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const k = i % n;
+      const x = track.x[k] + track.nx[k] * offset, y = track.y[k] + track.ny[k] * offset;
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.closePath();
+  };
+  g.lineJoin = 'round';
+
+  // Barrier walls: wide purple band with white blocks, outlined in black. The road covers the middle.
+  const edge = HW + KERB_WIDTH;
+  g.strokeStyle = PAL.black;
+  g.lineWidth = (edge + WALL_WIDTH + 1) * 2;
+  loop(0);
+  g.stroke();
+  g.strokeStyle = PAL.purple;
+  g.lineWidth = (edge + WALL_WIDTH) * 2;
+  g.stroke();
+  g.strokeStyle = PAL.white;
+  g.setLineDash([12, 12]);
+  g.stroke();
+  g.setLineDash([]);
+  g.strokeStyle = PAL.black;
+  g.lineWidth = edge * 2 + 2;
+  g.stroke();
+  g.strokeStyle = PAL.asphalt;
+  g.lineWidth = edge * 2;
+  g.stroke();
 
   // Kerbs on the corners, alternating purple and white.
   for (let i = 0; i < n; i++) {
@@ -117,17 +217,6 @@ function buildTrackCanvas(track) {
     }
   }
 
-  const loop = (offset) => {
-    g.beginPath();
-    for (let i = 0; i <= n; i++) {
-      const k = i % n;
-      const x = track.x[k] + track.nx[k] * offset, y = track.y[k] + track.ny[k] * offset;
-      if (i === 0) g.moveTo(x, y);
-      else g.lineTo(x, y);
-    }
-    g.closePath();
-  };
-  g.lineJoin = 'round';
   g.strokeStyle = PAL.asphalt;
   g.lineWidth = HW * 2;
   loop(0);
@@ -139,8 +228,48 @@ function buildTrackCanvas(track) {
   loop(-(HW - 3));
   g.stroke();
 
+  // Road decals (snapped with everything else so rotated edges stay crisp).
+  const items = obstacleLayout(track);
+  for (const o of items) {
+    if (o.type === 'oil') {
+      g.fillStyle = PAL.black;
+      for (const [dx, dy, r] of [[0, 0, 10], [-6, 4, 7], [6, -3, 7], [3, 6, 5]]) {
+        g.beginPath();
+        g.arc(o.x + dx, o.y + dy, r, 0, TAU);
+        g.fill();
+      }
+      g.fillStyle = PAL.purpleDark;
+      for (const [dx, dy, r] of [[-3, -3, 3], [5, 1, 2]]) {
+        g.beginPath();
+        g.arc(o.x + dx, o.y + dy, r, 0, TAU);
+        g.fill();
+      }
+    } else if (o.type === 'boost') {
+      const i = o.idx;
+      g.save();
+      g.setTransform(track.tx[i], track.ty[i], track.nx[i], track.ny[i], o.x, o.y);
+      g.fillStyle = PAL.black;
+      g.fillRect(-13, -12, 26, 24);
+      g.fillStyle = PAL.purpleDark;
+      g.fillRect(-12, -11, 24, 22);
+      g.fillStyle = PAL.orange;
+      for (const ax of [-8, 0, 8]) {
+        g.beginPath();
+        g.moveTo(ax - 3, -9);
+        g.lineTo(ax + 3, 0);
+        g.lineTo(ax - 3, 9);
+        g.lineTo(ax - 7, 9);
+        g.lineTo(ax - 1, 0);
+        g.lineTo(ax - 7, -9);
+        g.closePath();
+        g.fill();
+      }
+      g.restore();
+    }
+  }
+
   // Palette snap + speckle texture.
-  const palette = [PAL.lime, PAL.limeMid, PAL.purple, PAL.white, PAL.asphalt].map(hexToRgb);
+  const palette = [PAL.lime, PAL.limeMid, PAL.purple, PAL.white, PAL.asphalt, PAL.black, PAL.orange, PAL.purpleDark].map(hexToRgb);
   const asphaltLight = hexToRgb(PAL.asphaltLight), limeDark = hexToRgb(PAL.limeDark);
   const img = g.getImageData(0, 0, W, H);
   const data = img.data;
@@ -190,11 +319,11 @@ function buildTrackCanvas(track) {
   for (let i = 0; i < n; i += 9) {
     if (Math.abs(track.curv[i]) < 1 / 150) continue;
     const side = track.curv[i] > 0 ? -1 : 1;
-    for (const extra of [12, 18]) {
-      const off = HW + KERB_WIDTH + extra;
+    for (const extra of [14, 20]) {
+      const off = edge + extra;
       const x = Math.round(track.x[i] + track.nx[i] * side * off);
       const y = Math.round(track.y[i] + track.ny[i] * side * off);
-      if (track.distanceFromCenter(x, y) < HW + 10) continue;
+      if (track.distanceFromCenter(x, y) < edge + WALL_WIDTH + 6) continue;
       g.fillStyle = PAL.black;
       g.fillRect(x - 2, y - 1, 5, 3);
       g.fillRect(x - 1, y - 2, 3, 5);
@@ -231,7 +360,13 @@ function buildTrackCanvas(track) {
     drawText(g, 'TURBO PIXEL GP', x, gs.y + 2, PAL.orange, 1, 'left', PAL.purpleDeep);
   }
 
-  // Trees (solid) with a soft pixel shadow.
+  // Tyre-stack islands in the middle of the road.
+  const tyre = buildTyreSprite();
+  for (const o of items) {
+    if (o.type === 'tyre') g.drawImage(tyre, Math.round(o.x - tyre.width / 2), Math.round(o.y - tyre.height / 2));
+  }
+
+  // Trees with a soft pixel shadow.
   const tree = buildTreeSprite();
   const shadow = buildRoundSprite(TREE_SPRITE_RADIUS - 1, () => '#97ad14');
   for (const t of track.trees) {
@@ -287,6 +422,10 @@ class Renderer {
     this.wctx = this.world.getContext('2d');
     this.minimap = buildMinimap(track);
     this.spriteCache = new Map();
+    this.bumper = [buildBumperSprite(false), buildBumperSprite(true)];
+    this.slider = [buildSliderSprite(false), buildSliderSprite(true)];
+    this.cone = buildConeSprite();
+    this.coin = buildCoinSprites();
     this.resetWorld();
   }
 
@@ -324,6 +463,7 @@ class Renderer {
     race.skids.length = 0;
 
     ctx.drawImage(this.world, camX, camY, VIEW_W, VIEW_H, 0, 0, VIEW_W, VIEW_H);
+    this.drawObstacles(race.obstacles, camX, camY);
 
     const visible = race.cars.filter((c) => c.x > camX - 20 && c.x < camX + VIEW_W + 20 && c.y > camY - 20 && c.y < camY + VIEW_H + 20);
     for (const car of visible) {
@@ -352,12 +492,33 @@ class Renderer {
       ctx.fillRect(x - 1, y + 2, 3, 1);
       ctx.fillRect(x, y + 3, 1, 1);
     }
+
+    // Floating score popups; they blink out at the end of their life.
+    for (const p of race.popups) {
+      if (p.life < 0.25 && Math.floor(p.life * 20) % 2) continue;
+      drawText(ctx, p.text, Math.round(p.x - camX), Math.round(p.y - camY), p.color, 1, 'center', PAL.black);
+    }
+  }
+
+  drawObstacles(obs, camX, camY) {
+    const ctx = this.ctx;
+    const near = (o) => o.x > camX - 16 && o.x < camX + VIEW_W + 16 && o.y > camY - 16 && o.y < camY + VIEW_H + 16;
+    const blit = (img, o) => ctx.drawImage(img, Math.round(o.x - camX - img.width / 2), Math.round(o.y - camY - img.height / 2));
+    const frame = Math.floor(obs.time * 6) % 2;
+    for (const o of obs.coins) if (o.timer <= 0 && near(o)) blit(this.coin[frame], o);
+    for (const o of obs.cones) if (near(o)) blit(this.cone, o);
+    for (const o of obs.items) {
+      if (!near(o)) continue;
+      if (o.type === 'bumper') blit(this.bumper[o.flash > 0 ? 1 : 0], o);
+      else if (o.type === 'slider') blit(this.slider[o.flash > 0 ? 1 : 0], o);
+    }
   }
 
   drawHUD(race, now) {
     const ctx = this.ctx;
     const pl = race.player;
     const total = race.cars.length;
+    const blink = Math.floor(now * 4) % 2 === 0;
 
     drawPanel(ctx, 6, 6, 62, 30);
     drawText(ctx, 'POS', 10, 9, PAL.lime);
@@ -371,13 +532,14 @@ class Renderer {
     drawText(ctx, '/' + RACE_LAPS, 80 + textWidth(String(lap), 2), 26, PAL.white);
 
     const tx = VIEW_W - 112;
-    drawPanel(ctx, tx, 6, 106, 36);
-    const current = pl.finished ? pl.lapTimes[pl.lapTimes.length - 1] : race.time - pl.lapStart;
-    const rows = [['TIME', race.time], ['LAP', current], ['BEST', pl.bestLap]];
-    rows.forEach(([label, t], k) => {
-      drawText(ctx, label, tx + 4, 9 + k * 11, PAL.lime);
-      drawText(ctx, formatTime(t), tx + 102, 9 + k * 11, k === 2 ? PAL.orange : PAL.white, 1, 'right');
-    });
+    drawPanel(ctx, tx, 6, 106, 40);
+    drawText(ctx, 'SCORE', tx + 4, 9, PAL.lime);
+    drawText(ctx, String(race.scoreTotal), tx + 102, 18, PAL.orange, 2, 'right', PAL.black);
+    drawText(ctx, 'TIME', tx + 4, 36, PAL.purpleLight);
+    drawText(ctx, formatTime(pl.finished ? pl.finishTime : race.time), tx + 102, 36, PAL.white, 1, 'right');
+    if (race.comboTimer > 0 && race.combo > 1 && blink) {
+      drawText(ctx, 'COMBO X' + race.combo, tx + 53, 51, PAL.lime, 1, 'center', PAL.black);
+    }
 
     // Mini standings: top four, plus the player if further back.
     const list = race.standings.slice(0, 4);
@@ -393,13 +555,8 @@ class Renderer {
       drawText(ctx, car.name, 32, y, car.isPlayer ? PAL.orange : PAL.white);
     });
 
-    // Speed bar.
-    drawPanel(ctx, 6, VIEW_H - 20, 106, 14);
-    drawText(ctx, 'SPD', 10, VIEW_H - 17, PAL.lime);
-    const segs = 14, lit = Math.round(clamp(pl.speed / CAR_MAX_SPEED, 0, 1) * segs);
-    for (let k = 0; k < segs; k++) {
-      ctx.fillStyle = k >= lit ? PAL.purpleDeep : k < 9 ? PAL.lime : k < 12 ? PAL.orange : PAL.red;
-      ctx.fillRect(32 + k * 5, VIEW_H - 17, 4, 8);
+    if (pl.boostTimer > 0) {
+      drawText(ctx, 'BOOST!', 8, VIEW_H - 22, blink ? PAL.orange : PAL.yellow, 2, 'left', PAL.black);
     }
 
     // Minimap.
@@ -417,11 +574,8 @@ class Renderer {
     ctx.fillStyle = PAL.orange;
     ctx.fillRect(mx + Math.floor(pl.x * mm.scale) - 2, my + Math.floor(pl.y * mm.scale) - 2, 4, 4);
 
-    const blink = Math.floor(now * 4) % 2 === 0;
     if (pl.wrongWayTimer > 0.8 && blink) {
       drawText(ctx, 'WRONG WAY!', VIEW_W / 2, 70, PAL.red, 3, 'center', PAL.black);
-    } else if (pl.lostTimer > 0.4 && !pl.finished) {
-      drawText(ctx, 'RETURN TO TRACK', VIEW_W / 2, 70, PAL.orange, 2, 'center', PAL.black);
     }
   }
 
