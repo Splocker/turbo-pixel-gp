@@ -1,0 +1,12 @@
+{
+  "name": "turbo-pixel-gp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Top-down 8-bit arcade racer. Open index.html in a browser to play.",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
