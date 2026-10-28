@@ -1,10 +1,6 @@
 'use strict';
 
-const BUMPER_RADIUS = 8;
-const BUMPER_KICK = 150;      // minimum speed a bumper throws a car back out at
-const BUMPER_BOUNCE = 1.2;
 const TYRE_RADIUS = 6;
-const SLIDER_RADIUS = 9;
 const OIL_RADIUS = 13;
 const BOOST_RADIUS = 12;
 const CONE_RADIUS = 3;
@@ -17,30 +13,25 @@ const CAR_BODY_RADIUS = 6;    // car treated as one circle against obstacles
 // positive is the driver's right). The grid (the last ~320px of the lap) is kept clear.
 const OBSTACLE_LAYOUT = [
   { type: 'coins', d: 90, lat: -22, count: 5 },
-  { type: 'bumper', d: 330, lat: 4 },
-  { type: 'boost', d: 520, lat: -24 },
-  { type: 'cones', d: 660, lat: 22 },
-  { type: 'coins', d: 700, lat: -18, count: 4 },
-  { type: 'oil', d: 840, lat: -16 },
-  { type: 'bumper', d: 960, lat: -30 },
-  { type: 'bumper', d: 960, lat: 30 },
-  { type: 'island', d: 1150, len: 100 },
-  { type: 'coins', d: 1160, lat: 26, count: 4 },
-  { type: 'oil', d: 1330, lat: 20 },
-  { type: 'boost', d: 1480, lat: 0 },
-  { type: 'slider', d: 1620, amp: 34, speed: 1.7 },
-  { type: 'bumper', d: 1780, lat: -20 },
-  { type: 'coins', d: 1830, lat: 26, count: 4 },
-  { type: 'bumper', d: 1910, lat: 22 },
-  { type: 'cones', d: 1980, lat: -10 },
-  { type: 'oil', d: 2080, lat: 22 },
-  { type: 'slider', d: 2200, amp: 34, speed: -1.3 },
-  { type: 'coins', d: 2290, lat: 0, count: 5 },
-  { type: 'bumper', d: 2420, lat: 12 },
-  { type: 'oil', d: 2500, lat: -24 },
-  { type: 'cones', d: 2560, lat: 26 },
-  { type: 'boost', d: 2640, lat: -6 },
-  { type: 'island', d: 2680, len: 70 },
+  { type: 'boost', d: 420, lat: -20 },
+  { type: 'cones', d: 620, lat: 22 },
+  { type: 'coins', d: 760, lat: -18, count: 4 },
+  { type: 'oil', d: 900, lat: -16 },
+  { type: 'cones', d: 1040, lat: 20 },
+  { type: 'island', d: 1250, len: 100 },
+  { type: 'coins', d: 1260, lat: 26, count: 4 },
+  { type: 'oil', d: 1460, lat: 20 },
+  { type: 'boost', d: 1620, lat: 0 },
+  { type: 'coins', d: 1760, lat: -20, count: 5 },
+  { type: 'cones', d: 1900, lat: 18 },
+  { type: 'coins', d: 2000, lat: -24, count: 4 },
+  { type: 'oil', d: 2140, lat: 22 },
+  { type: 'boost', d: 2300, lat: 0 },
+  { type: 'coins', d: 2420, lat: 10, count: 5 },
+  { type: 'oil', d: 2600, lat: -24 },
+  { type: 'cones', d: 2680, lat: 24 },
+  { type: 'boost', d: 2780, lat: -6 },
+  { type: 'island', d: 2820, len: 60 },
 ];
 
 // Expands the layout into individual objects with world positions.
@@ -52,10 +43,8 @@ function placeObstacles(track) {
   };
   for (const e of OBSTACLE_LAYOUT) {
     switch (e.type) {
-      case 'bumper': items.push({ type: 'bumper', r: BUMPER_RADIUS, ...at(e.d, e.lat) }); break;
       case 'oil': items.push({ type: 'oil', r: OIL_RADIUS, ...at(e.d, e.lat) }); break;
       case 'boost': items.push({ type: 'boost', r: BOOST_RADIUS, ...at(e.d, e.lat) }); break;
-      case 'slider': items.push({ type: 'slider', r: SLIDER_RADIUS, amp: e.amp, speed: e.speed, ...at(e.d, 0) }); break;
       case 'island':
         for (let s = 0; s <= e.len; s += 10) items.push({ type: 'tyre', r: TYRE_RADIUS, ...at(e.d + s, 0) });
         break;
@@ -78,7 +67,7 @@ function placeObstacles(track) {
 function buildAiLanes(track, items) {
   const n = track.n, limit = TRACK_HALF_WIDTH - 8;
   const BEFORE = 10, AFTER = 6, MIN_GAP = 14;
-  const hazards = items.filter((o) => o.type === 'bumper' || o.type === 'tyre' || o.type === 'oil' || o.type === 'cone');
+  const hazards = items.filter((o) => o.type === 'tyre' || o.type === 'oil' || o.type === 'cone');
   const boosts = items.filter((o) => o.type === 'boost');
   const left = new Float32Array(n), right = new Float32Array(n);
 
@@ -141,13 +130,12 @@ function obstacleLayout(track) {
   return track.obstacleLayout;
 }
 
-// Per-race state of the course furniture: bumper flashes, sliding blocks, kicked cones, coins.
+// Per-race state of the course furniture: boost-pad flashes, kicked cones, coins.
 class Obstacles {
   constructor(track) {
     this.track = track;
-    this.items = obstacleLayout(track).map((o) => ({ ...o, homeX: o.x, homeY: o.y, vx: 0, vy: 0, flash: 0, timer: 0, spin: 0 }));
-    this.solids = this.items.filter((o) => o.type === 'bumper' || o.type === 'tyre' || o.type === 'slider');
-    this.sliders = this.items.filter((o) => o.type === 'slider');
+    this.items = obstacleLayout(track).map((o) => ({ ...o, homeX: o.x, homeY: o.y, vx: 0, vy: 0, flash: 0, timer: 0 }));
+    this.tyres = this.items.filter((o) => o.type === 'tyre');
     this.pads = this.items.filter((o) => o.type === 'oil' || o.type === 'boost');
     this.cones = this.items.filter((o) => o.type === 'cone');
     this.coins = this.items.filter((o) => o.type === 'coin');
@@ -155,32 +143,20 @@ class Obstacles {
   }
 
   update(dt) {
-    const track = this.track;
     this.time += dt;
     for (const o of this.items) o.flash = Math.max(0, o.flash - dt);
-    for (const s of this.sliders) {
-      const i = s.idx;
-      const lat = Math.sin(this.time * s.speed) * s.amp;
-      s.lat = lat;
-      s.x = track.x[i] + track.nx[i] * lat;
-      s.y = track.y[i] + track.ny[i] * lat;
-    }
     for (const c of this.cones) {
       if (!c.timer) continue;
       c.x += c.vx * dt;
       c.y += c.vy * dt;
       c.vx *= Math.exp(-2.5 * dt);
       c.vy *= Math.exp(-2.5 * dt);
-      c.spin += c.vx * dt * 0.2;
-      bounceOffWalls(c, track, CONE_RADIUS, 0.5);
-      c.idx = track.nearestLocal(c.x, c.y, c.idx, 6, 6);
       c.timer -= dt;
       if (c.timer <= 0) {
         c.timer = 0;
         c.x = c.homeX;
         c.y = c.homeY;
         c.vx = c.vy = 0;
-        c.idx = track.nearestGlobal(c.x, c.y);
       }
     }
     for (const c of this.coins) c.timer = Math.max(0, c.timer - dt);
@@ -189,9 +165,10 @@ class Obstacles {
   // Resolves one car against the furniture. Returns what it hit, for scoring and effects.
   collide(car) {
     const hits = [];
-    for (const o of this.solids) {
+    // Tyre stacks are solid but soft: the car bounces off and keeps going.
+    for (const o of this.tyres) {
       const dx = car.x - o.x, dy = car.y - o.y;
-      if (Math.abs(dx) > 24 || Math.abs(dy) > 24) continue;
+      if (Math.abs(dx) > 16 || Math.abs(dy) > 16) continue;
       const d = Math.hypot(dx, dy);
       const pen = o.r + CAR_BODY_RADIUS - d;
       if (pen <= 0 || d < 1e-4) continue;
@@ -199,27 +176,12 @@ class Obstacles {
       car.x += nx * pen;
       car.y += ny * pen;
       const vn = car.vx * nx + car.vy * ny;
-      if (o.type === 'tyre') {
-        if (vn < 0) {
-          car.vx -= 1.5 * vn * nx;
-          car.vy -= 1.5 * vn * ny;
-          car.vx *= 0.85;
-          car.vy *= 0.85;
-        }
-        continue;
+      if (vn < 0) {
+        car.vx -= 1.5 * vn * nx;
+        car.vy -= 1.5 * vn * ny;
+        car.vx *= 0.85;
+        car.vy *= 0.85;
       }
-      // Bumpers and sliders throw the car back out like a pinball bumper.
-      const out = Math.max(-vn * BUMPER_BOUNCE, BUMPER_KICK);
-      if (vn < out) {
-        car.vx += (out - vn) * nx;
-        car.vy += (out - vn) * ny;
-      }
-      if (o.flash <= 0.1) {
-        const side = nx * Math.sin(car.angle) - ny * Math.cos(car.angle);
-        car.spinOut(0.25, (side >= 0 ? 1 : -1) * 5);
-        hits.push({ type: 'bumper', x: o.x, y: o.y });
-      }
-      o.flash = 0.3;
     }
 
     for (const o of this.pads) {

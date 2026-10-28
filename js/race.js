@@ -6,7 +6,7 @@ const MAX_OPPONENTS = 20;
 const DEFAULT_OPPONENTS = 4;
 
 // Arcade scoring. Every race pays out something; bumping and grabbing stuff pays the most.
-const POINTS = { bump: 25, bigBump: 75, coin: 10, boost: 5, cone: 5, bumper: 10 };
+const POINTS = { bump: 25, bigBump: 75, coin: 10, boost: 5, cone: 5 };
 const BIG_BUMP_IMPACT = 90;
 const MIN_BUMP_IMPACT = 20;
 const COMBO_WINDOW = 2;
@@ -15,7 +15,9 @@ const PLACE_BONUS = [1000, 700, 500, 350, 200];
 const PLACE_BONUS_MIN = 100;
 const FIELD_BONUS = 40;       // per car beaten
 const TIME_BONUS = 50;        // per second under par
-const PAR_SLACK = 1.5;        // par is a flat-out race time plus this margin
+const PAR_SLACK = 1.35;       // par is a flat-out race time plus this margin
+const EDGE_ASSIST_ZONE = 10;  // px inside the road edge where the player's steering assist starts
+const EDGE_ASSIST_RATE = 0.8; // rad/s
 
 const AI_NAMES = [
   'ACE', 'BOLT', 'ZIP', 'NOVA', 'DASH', 'FLUX', 'VIPER', 'BLITZ', 'TURBO', 'NEON',
@@ -110,19 +112,37 @@ class Race {
     for (const car of this.cars) {
       if (car.ai) car.ai.update(dt, this);
     }
-    for (const car of this.cars) car.update(dt);
+    for (const car of this.cars) {
+      car.surface = track.surfaceAt(car.x, car.y, car.idx);
+      car.update(dt);
+      if (car === this.player && !car.ai) this.assistToRoad(car, dt);
+    }
     resolveCarCollisions(this.cars, (hit) => {
       this.sparks(hit.x, hit.y, hit.impact);
       this.scoreBump(hit);
     });
     for (const car of this.cars) {
       for (const hit of this.obstacles.collide(car)) this.onObstacleHit(car, hit);
-      if (bounceOffWalls(car, track, 4) > 60) this.sparks(car.x, car.y, 40);
+      collideScenery(car, track);
       this.updateProgress(car, dt);
       this.emitEffects(car);
     }
     this.updatePositions();
     this.updateParticles(dt);
+  }
+
+  // Near the edge and pointing off the road, the player's car eases back toward the track
+  // direction. It is gentle enough that steering off on purpose still works.
+  assistToRoad(car, dt) {
+    if (car.spinTimer > 0 || car.forwardSpeed < 40) return;
+    const t = this.track, i = car.idx;
+    const lat = t.lateral(car.x, car.y, i);
+    if (Math.abs(lat) < TRACK_HALF_WIDTH - EDGE_ASSIST_ZONE) return;
+    const diff = wrapAngle(Math.atan2(t.ty[i], t.tx[i]) - car.angle);
+    if (Math.abs(diff) > Math.PI / 2) return; // facing backwards: leave it alone
+    const outward = Math.sign(lat) * Math.sin(-diff) > 0;
+    if (!outward) return;
+    car.angle = wrapAngle(car.angle + clamp(diff, -EDGE_ASSIST_RATE * dt, EDGE_ASSIST_RATE * dt));
   }
 
   // ---------- scoring ----------
@@ -150,7 +170,6 @@ class Race {
   }
 
   onObstacleHit(car, hit) {
-    if (hit.type === 'bumper') this.sparks(hit.x, hit.y, 80, [PAL.lime, PAL.purpleLight, PAL.white]);
     if (hit.type === 'cone') this.sparks(hit.x, hit.y, 40, [PAL.orange, PAL.white]);
     if (hit.type === 'coin') this.sparks(hit.x, hit.y, 50, [PAL.yellow, PAL.white]);
     if (car !== this.player || !this.playerScoring || !POINTS[hit.type]) return;
@@ -251,6 +270,13 @@ class Race {
         { x: car.x - fx * 4 - rx * 3, y: car.y - fy * 4 - ry * 3 }
       );
       if (this.skids.length > 4000) this.skids.splice(0, this.skids.length - 4000);
+    }
+    if (car.surface === 'grass' && car.speed > 60 && this.rng() < 0.35) {
+      this.particles.push({
+        x: car.x - Math.cos(car.angle) * 6, y: car.y - Math.sin(car.angle) * 6,
+        vx: (this.rng() - 0.5) * 30, vy: (this.rng() - 0.5) * 30,
+        life: 0.4 + this.rng() * 0.3, color: this.rng() < 0.5 ? PAL.limeDeep : PAL.brown,
+      });
     }
     if (car.boostTimer > 0 && this.rng() < 0.6) {
       this.particles.push({

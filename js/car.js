@@ -7,6 +7,8 @@ const CAR_BRAKE = 700;
 const CAR_REVERSE_MAX = 110;
 const CAR_STEER_RATE = 3.2;   // rad/s, the same at every speed above a crawl
 const CAR_GRIP = 12;          // how quickly sideways slide is scrubbed off
+const GRASS_SPEED = 0.6;      // off the road the car eases down to this share of its speed
+const GRASS_GRIP = 0.75;
 const CAR_BOOST = 1.3;
 const CAR_BOOST_TIME = 1.2;
 const CAR_RADIUS = 4.2;       // collision shape: two circles along the car's length
@@ -27,6 +29,7 @@ class Car {
     this.speedFactor = 1;
     this.boostTimer = 0;
     this.oilCooldown = 0;
+    this.surface = 'road';
     this.input = { throttle: 0, brake: 0, steer: 0 };
     this.spinTimer = 0;
     this.spinRate = 0;
@@ -60,7 +63,8 @@ class Car {
   }
 
   get topSpeed() {
-    return CAR_SPEED * this.speedFactor * (this.boostTimer > 0 ? CAR_BOOST : 1);
+    const surface = this.surface === 'grass' ? GRASS_SPEED : 1;
+    return CAR_SPEED * this.speedFactor * surface * (this.boostTimer > 0 ? CAR_BOOST : 1);
   }
 
   place(x, y, angle) {
@@ -105,10 +109,11 @@ class Car {
         else if (vF > -CAR_REVERSE_MAX) vF -= 300 * inp.brake * dt;
       }
       if (!inp.throttle && !inp.brake) vF -= Math.sign(vF) * Math.min(Math.abs(vF), CAR_COAST * dt);
-      if (vF > maxSp) vF -= (vF - maxSp) * 3 * dt; // bleed off boost and bumper kicks
+      if (vF > maxSp) vF -= (vF - maxSp) * 3 * dt; // bleed off boost, bumps and grass
 
       const rate = CAR_STEER_RATE * Math.min(1, Math.abs(vF) / 40);
       turn = inp.steer * rate * Math.sign(vF);
+      if (this.surface === 'grass') grip *= GRASS_GRIP;
     }
 
     vL *= Math.exp(-grip * dt);
@@ -117,6 +122,6 @@ class Car {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
     this.angle = wrapAngle(this.angle + turn * dt);
-    this.skidding = Math.abs(vL) > 45 || this.spinTimer > 0;
+    this.skidding = (Math.abs(vL) > 45 || this.spinTimer > 0) && this.surface !== 'grass';
   }
 }

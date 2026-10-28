@@ -3,18 +3,18 @@
 const TRACK_HALF_WIDTH = 48;
 const TRACK_SPACING = 6; // distance between centerline samples, in pixels
 const KERB_WIDTH = 5;
-const WALL_WIDTH = 6;    // bouncy barrier just outside the kerb
-const WORLD_MARGIN = 150;
+const WORLD_MARGIN = 200;
+const TREE_CLEARANCE = 120; // trees stay this far from the centerline, leaving plenty of run-off
 
 // Control points of the circuit, driven in this order. The first three are collinear so the
 // start/finish straight is perfectly straight.
 const TRACK_CONTROL = [
-  [250, 150], [600, 150], [950, 150],
-  [1140, 200], [1220, 360], [1180, 540],
-  [1040, 660], [860, 680], [720, 590], [560, 600],
-  [430, 740], [250, 760], [120, 620], [110, 400], [150, 220],
+  [280, 150], [650, 150], [1000, 150],
+  [1220, 220], [1310, 400], [1260, 600],
+  [1100, 740], [900, 770], [740, 725], [580, 745],
+  [400, 815], [230, 800], [110, 670], [90, 460], [130, 270],
 ];
-const TRACK_START = [820, 150];
+const TRACK_START = [870, 150];
 
 // Centripetal Catmull-Rom (no overshoot or cusps with uneven point spacing).
 function catmullRom(p0, p1, p2, p3, u) {
@@ -128,33 +128,29 @@ class Track {
       this.ny[i] = this.tx[i];
     }
     this.curv = curvatureOf(this.x, this.y, 3);
-
-    // Kerbs wherever the corner is meaningful, extended a little so they read as blocks.
-    this.kerb = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      for (let k = -6; k <= 6; k++) {
-        if (Math.abs(this.curv[(i + k + n) % n]) > 1 / 260) { this.kerb[i] = 1; break; }
-      }
-    }
   }
 
   buildScenery() {
-    const edge = TRACK_HALF_WIDTH + KERB_WIDTH + WALL_WIDTH;
     // Grandstand above the start straight (the straight is the topmost part of the circuit).
     const sx = this.x[0], sy = this.y[0];
-    this.grandstand = { x: sx - 330, y: sy - edge - 52, w: 400, h: 40 };
+    this.grandstand = { x: sx - 330, y: sy - 130, w: 400, h: 40 };
 
-    // Trees are decoration only: the walls keep every car on the circuit.
     const rng = makeRng(1337);
     this.trees = [];
     const gs = this.grandstand;
-    for (let tries = 0; tries < 3000 && this.trees.length < 110; tries++) {
+    for (let tries = 0; tries < 4000 && this.trees.length < 140; tries++) {
       const x = 24 + rng() * (this.worldW - 48);
       const y = 24 + rng() * (this.worldH - 48);
       if (x > gs.x - 20 && x < gs.x + gs.w + 20 && y > gs.y - 20 && y < gs.y + gs.h + 20) continue;
-      if (this.distanceFromCenter(x, y) < edge + 26) continue;
+      if (this.distanceFromCenter(x, y) < TREE_CLEARANCE) continue;
       if (this.trees.some((t) => Math.hypot(t.x - x, t.y - y) < 16)) continue;
       this.trees.push({ x, y, r: 5 });
+    }
+    this.treeGrid = new Map();
+    for (const t of this.trees) {
+      const key = Math.floor(t.x / 64) + ',' + Math.floor(t.y / 64);
+      if (!this.treeGrid.has(key)) this.treeGrid.set(key, []);
+      this.treeGrid.get(key).push(t);
     }
   }
 
@@ -191,6 +187,15 @@ class Track {
   distanceFromCenter(x, y) {
     const i = this.nearestGlobal(x, y);
     return Math.hypot(x - this.x[i], y - this.y[i]);
+  }
+
+  // Surface under a point, searched near a known sample index (cheap enough to run every frame).
+  surfaceAt(x, y, idx) {
+    const i = this.nearestLocal(x, y, idx, 4, 4);
+    const d = Math.abs(this.lateral(x, y, i));
+    if (d <= TRACK_HALF_WIDTH) return 'road';
+    if (d <= TRACK_HALF_WIDTH + KERB_WIDTH) return 'kerb';
+    return 'grass';
   }
 
   // Sample index for a distance along the lap.

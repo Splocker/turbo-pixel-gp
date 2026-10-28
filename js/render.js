@@ -96,35 +96,6 @@ function buildTyreSprite() {
   });
 }
 
-function buildBumperSprite(lit) {
-  return buildRoundSprite(BUMPER_RADIUS + 1, (x, y, d) => {
-    if (d > BUMPER_RADIUS) return PAL.black;
-    if (d > BUMPER_RADIUS - 2.5) return lit ? PAL.orange : PAL.purple;
-    if (d > 2.5) return lit ? PAL.yellow : x + y < -2 ? PAL.lime : PAL.limeDark;
-    return PAL.white;
-  });
-}
-
-// Hazard-striped block for the sliding bumpers.
-function buildSliderSprite(lit) {
-  const s = SLIDER_RADIUS * 2;
-  const cv = makeCanvas(s + 2, s + 2);
-  const g = cv.getContext('2d');
-  g.fillStyle = PAL.black;
-  g.fillRect(0, 0, s + 2, s + 2);
-  for (let y = 0; y < s; y++) {
-    for (let x = 0; x < s; x++) {
-      g.fillStyle = Math.floor((x + y) / 4) % 2 ? PAL.black : lit ? PAL.orange : PAL.yellow;
-      g.fillRect(x + 1, y + 1, 1, 1);
-    }
-  }
-  g.fillStyle = PAL.purple;
-  g.fillRect(6, 6, s - 10, s - 10);
-  g.fillStyle = PAL.white;
-  g.fillRect(8, 8, 2, 2);
-  return cv;
-}
-
 function buildConeSprite() {
   const rows = ['..o..', '.ooo.', '.www.', 'ooooo', 'kkkkk'];
   const colors = { o: PAL.orange, w: PAL.white, k: PAL.black };
@@ -180,29 +151,18 @@ function buildTrackCanvas(track) {
   };
   g.lineJoin = 'round';
 
-  // Barrier walls: wide purple band with white blocks, outlined in black. The road covers the middle.
+  // Dark outline just outside the kerbs, then asphalt under the kerb strip.
   const edge = HW + KERB_WIDTH;
   g.strokeStyle = PAL.black;
-  g.lineWidth = (edge + WALL_WIDTH + 1) * 2;
-  loop(0);
-  g.stroke();
-  g.strokeStyle = PAL.purple;
-  g.lineWidth = (edge + WALL_WIDTH) * 2;
-  g.stroke();
-  g.strokeStyle = PAL.white;
-  g.setLineDash([12, 12]);
-  g.stroke();
-  g.setLineDash([]);
-  g.strokeStyle = PAL.black;
   g.lineWidth = edge * 2 + 2;
+  loop(0);
   g.stroke();
   g.strokeStyle = PAL.asphalt;
   g.lineWidth = edge * 2;
   g.stroke();
 
-  // Kerbs on the corners, alternating purple and white.
+  // Rumble-strip kerbs along both edges, alternating purple and white, so the edge is easy to read.
   for (let i = 0; i < n; i++) {
-    if (!track.kerb[i]) continue;
     const j = (i + 1) % n;
     g.fillStyle = Math.floor(i / 2) % 2 ? PAL.white : PAL.purple;
     for (const side of [-1, 1]) {
@@ -315,23 +275,6 @@ function buildTrackCanvas(track) {
     g.restore();
   }
 
-  // Tyre stacks on the outside of the tighter corners.
-  for (let i = 0; i < n; i += 9) {
-    if (Math.abs(track.curv[i]) < 1 / 150) continue;
-    const side = track.curv[i] > 0 ? -1 : 1;
-    for (const extra of [14, 20]) {
-      const off = edge + extra;
-      const x = Math.round(track.x[i] + track.nx[i] * side * off);
-      const y = Math.round(track.y[i] + track.ny[i] * side * off);
-      if (track.distanceFromCenter(x, y) < edge + WALL_WIDTH + 6) continue;
-      g.fillStyle = PAL.black;
-      g.fillRect(x - 2, y - 1, 5, 3);
-      g.fillRect(x - 1, y - 2, 3, 5);
-      g.fillStyle = Math.floor(i / 9) % 2 ? PAL.orange : PAL.white;
-      g.fillRect(x, y, 1, 1);
-    }
-  }
-
   // Grandstand with crowd, roof banner and advertising boards.
   const gs = track.grandstand;
   g.fillStyle = PAL.black;
@@ -422,8 +365,6 @@ class Renderer {
     this.wctx = this.world.getContext('2d');
     this.minimap = buildMinimap(track);
     this.spriteCache = new Map();
-    this.bumper = [buildBumperSprite(false), buildBumperSprite(true)];
-    this.slider = [buildSliderSprite(false), buildSliderSprite(true)];
     this.cone = buildConeSprite();
     this.coin = buildCoinSprites();
     this.resetWorld();
@@ -507,11 +448,6 @@ class Renderer {
     const frame = Math.floor(obs.time * 6) % 2;
     for (const o of obs.coins) if (o.timer <= 0 && near(o)) blit(this.coin[frame], o);
     for (const o of obs.cones) if (near(o)) blit(this.cone, o);
-    for (const o of obs.items) {
-      if (!near(o)) continue;
-      if (o.type === 'bumper') blit(this.bumper[o.flash > 0 ? 1 : 0], o);
-      else if (o.type === 'slider') blit(this.slider[o.flash > 0 ? 1 : 0], o);
-    }
   }
 
   drawHUD(race, now) {
@@ -576,6 +512,8 @@ class Renderer {
 
     if (pl.wrongWayTimer > 0.8 && blink) {
       drawText(ctx, 'WRONG WAY!', VIEW_W / 2, 70, PAL.red, 3, 'center', PAL.black);
+    } else if (pl.lostTimer > 0.4 && !pl.finished) {
+      drawText(ctx, 'RETURN TO TRACK', VIEW_W / 2, 70, PAL.orange, 2, 'center', PAL.black);
     }
   }
 

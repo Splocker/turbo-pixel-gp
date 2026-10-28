@@ -391,6 +391,9 @@ class Game {
       drawText(ctx, this.flash.text, VIEW_W / 2, 92, this.flash.color, 3, 'center', PAL.black);
       if (this.flash.sub) drawText(ctx, this.flash.sub, VIEW_W / 2, 118, PAL.white, 1, 'center', PAL.black);
     }
+    if (this.state === 'race' && race.player.lostTimer > 1.2) {
+      drawText(ctx, 'R TO RESET', VIEW_W / 2, 92, PAL.white, 1, 'center', PAL.black);
+    }
   }
 
   drawPaused() {

@@ -11,7 +11,7 @@ class AIDriver {
     this.speedFactor = speedFactor;
     this.lanes = rng() < 0.5 ? track.aiLaneL : track.aiLaneR;
     this.laneBias = (rng() - 0.5) * 8;
-    // A slow weave around the lane: sometimes it carries the car into a bumper or the oil.
+    // A slow weave around the lane: sometimes it carries the car into the cones or the oil.
     this.weaveAmp = 2 + rng() * 6;
     this.weaveFreq = 0.6 + rng() * 0.8;
     this.weavePhase = rng() * TAU;
@@ -95,8 +95,8 @@ class AIDriver {
     }
   }
 
-  // Look for a car (or sliding block) directly ahead; if found, go around it on a side that is
-  // free. Also give room to cars running alongside.
+  // Look for a car directly ahead; if found, go around it on a side that is free.
+  // Also give room to cars running alongside.
   updateAvoidance(dt, race) {
     const car = this.car, track = this.track;
     const fx = Math.cos(car.angle), fy = Math.sin(car.angle);
@@ -105,8 +105,7 @@ class AIDriver {
     this.blockSpeed = 0;
     let threat = null;
     let sidePush = 0;
-    const others = race.obstacles ? race.cars.concat(race.obstacles.sliders) : race.cars;
-    for (const o of others) {
+    for (const o of race.cars) {
       if (o === car) continue;
       const dx = o.x - car.x, dy = o.y - car.y;
       if (Math.abs(dx) > 80 || Math.abs(dy) > 80) continue;

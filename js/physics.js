@@ -3,7 +3,6 @@
 const COLLISION_RESTITUTION = 0.8;
 const MIN_BUMP_IMPULSE = 40;      // even a nudge pushes cars visibly apart
 const SPIN_IMPACT_THRESHOLD = 30; // px/s closing speed needed to knock a car out of control
-const WALL_RESTITUTION = 0.6;
 
 function carCircles(car) {
   const fx = Math.cos(car.angle) * CAR_CIRCLE_OFFSET, fy = Math.sin(car.angle) * CAR_CIRCLE_OFFSET;
@@ -66,21 +65,43 @@ function resolveCarCollisions(cars, onImpact) {
   }
 }
 
-// Keeps a body (car or cone) between the barriers on both sides of the road. The body's idx must
-// be a recent nearest centerline sample. Returns the impact speed, or 0 if it didn't touch a wall.
-function bounceOffWalls(body, track, radius, restitution = WALL_RESTITUTION) {
-  const i = track.nearestLocal(body.x, body.y, body.idx, 4, 4);
-  const limit = TRACK_HALF_WIDTH + KERB_WIDTH - radius;
-  const lat = track.lateral(body.x, body.y, i);
-  if (Math.abs(lat) <= limit) return 0;
-  const side = Math.sign(lat);
-  const nx = -track.nx[i] * side, ny = -track.ny[i] * side; // points back onto the road
-  const pen = Math.abs(lat) - limit;
-  body.x += nx * pen;
-  body.y += ny * pen;
-  const vn = body.vx * nx + body.vy * ny;
-  if (vn >= 0) return 0;
-  body.vx -= (1 + restitution) * vn * nx;
-  body.vy -= (1 + restitution) * vn * ny;
-  return -vn;
+function pushOut(car, nx, ny, pen) {
+  car.x += nx * pen;
+  car.y += ny * pen;
+  const vn = car.vx * nx + car.vy * ny;
+  if (vn < 0) {
+    car.vx -= 1.4 * vn * nx;
+    car.vy -= 1.4 * vn * ny;
+    car.vx *= 0.7;
+    car.vy *= 0.7;
+  }
+}
+
+// Trees, the grandstand and the edge of the world are solid. All sit well off the road.
+function collideScenery(car, track) {
+  const gx = Math.floor(car.x / 64), gy = Math.floor(car.y / 64);
+  for (let ox = -1; ox <= 1; ox++) {
+    for (let oy = -1; oy <= 1; oy++) {
+      const list = track.treeGrid.get((gx + ox) + ',' + (gy + oy));
+      if (!list) continue;
+      for (const t of list) {
+        const dx = car.x - t.x, dy = car.y - t.y;
+        const d = Math.hypot(dx, dy);
+        const pen = t.r + 5 - d;
+        if (pen > 0 && d > 1e-4) pushOut(car, dx / d, dy / d, pen);
+      }
+    }
+  }
+
+  const g = track.grandstand;
+  const qx = clamp(car.x, g.x, g.x + g.w), qy = clamp(car.y, g.y, g.y + g.h);
+  const dx = car.x - qx, dy = car.y - qy;
+  const d = Math.hypot(dx, dy);
+  if (d < 6 && d > 1e-4) pushOut(car, dx / d, dy / d, 6 - d);
+
+  const m = 10;
+  if (car.x < m) pushOut(car, 1, 0, m - car.x);
+  if (car.y < m) pushOut(car, 0, 1, m - car.y);
+  if (car.x > track.worldW - m) pushOut(car, -1, 0, car.x - (track.worldW - m));
+  if (car.y > track.worldH - m) pushOut(car, 0, -1, car.y - (track.worldH - m));
 }
