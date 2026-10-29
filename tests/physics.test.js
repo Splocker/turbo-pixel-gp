@@ -92,3 +92,33 @@ test('trees, the grandstand and the world edge push cars back out', () => {
   assert.ok(c.x >= 10 && c.y <= track.worldH - 10);
   assert.ok(c.vx > 0 && c.vy < 0);
 });
+
+// Velocity change of the second car in a plain 100 px/s head-on hit between two normal cars.
+function normalHeadOnKnock() {
+  const a = carAt(0, 0, 0, 100, 0), b = carAt(12, 0, 0, -100, 0);
+  g.collideCars(a, b);
+  return b.vx + 100;
+}
+
+// A big car isn't moved or spun by a normal car, and knocks it twice as hard as a normal car would.
+test('a big car is immovable and knocks a normal car twice as far', () => {
+  const big = carAt(0, 0, 0, 100, 0);
+  big.bigTimer = g.BIG_TIME;
+  const small = carAt(20, 0, 0, -100, 0);
+  assert.ok(g.collideCars(big, small), 'the bigger body reaches further');
+  assert.equal(big.x, 0, 'big car not pushed');
+  assert.equal(big.vx, 100, 'big car not slowed');
+  assert.equal(big.spinTimer, 0, 'big car not spun');
+  assert.ok(small.spinTimer > 0, 'the normal car spins');
+  assert.ok(Math.abs((small.vx + 100) - 2 * normalHeadOnKnock()) < 1e-6, 'twice the usual knock');
+});
+
+// When two big cars meet they bump each other exactly like two normal cars do.
+test('two big cars collide normally', () => {
+  const a = carAt(0, 0, 0, 100, 0), b = carAt(24, 0, 0, -100, 0);
+  a.bigTimer = b.bigTimer = g.BIG_TIME;
+  const hit = g.collideCars(a, b);
+  assert.ok(hit && hit.spun);
+  assert.ok(Math.abs((b.vx + 100) - normalHeadOnKnock()) < 1e-6, 'same knock as two normal cars');
+  assert.ok(Math.abs(a.mass * a.vx + b.mass * b.vx) < 1e-6, 'momentum conserved');
+});

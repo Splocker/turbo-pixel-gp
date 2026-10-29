@@ -10,8 +10,12 @@ const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-// Game logic in page load order. font.js, render.js and game.js need a canvas/DOM and are not loaded.
-const LOGIC_SCRIPTS = ['util', 'track', 'obstacles', 'car', 'ai', 'physics', 'race', 'scores'];
+// Game logic in page load order. The drawing and screen scripts (font, sprites, track_canvas,
+// track_decor, hud, render, game*) need a canvas/DOM and are not loaded.
+const LOGIC_SCRIPTS = [
+  'util', 'spline', 'track', 'ai_lanes', 'obstacles', 'car', 'ai_powerups', 'ai', 'physics',
+  'powerups', 'powerup_effects', 'roster', 'race_scoring', 'race_effects', 'race', 'scores',
+];
 
 // In-memory stand-in for window.localStorage.
 function memoryStorage() {

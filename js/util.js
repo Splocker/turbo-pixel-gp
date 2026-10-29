@@ -83,3 +83,9 @@ function ordinal(n) {
   const teen = n % 100 >= 11 && n % 100 <= 13;
   return n + (teen ? 'TH' : ['TH', 'ST', 'ND', 'RD'][n % 10] || 'TH');
 }
+
+// Copies a methods object onto a class prototype, so one class can be spread over several files.
+// Getters stay getters (Object.assign would call them and copy the result instead).
+function mixInto(TargetClass, methods) {
+  Object.defineProperties(TargetClass.prototype, Object.getOwnPropertyDescriptors(methods));
+}

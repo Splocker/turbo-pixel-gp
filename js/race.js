@@ -5,35 +5,8 @@ const COUNTDOWN_TIME = 3;
 const MAX_OPPONENTS = 20;
 const DEFAULT_OPPONENTS = 4;
 
-// Arcade scoring. Every race pays out something; bumping and grabbing stuff pays the most.
-const POINTS = { bump: 25, bigBump: 75, coin: 10, boost: 5, cone: 5 };
-const BIG_BUMP_IMPACT = 90;
-const MIN_BUMP_IMPACT = 20;
-const COMBO_WINDOW = 2;
-const COMBO_MAX = 3;
-const PLACE_BONUS = [1000, 700, 500, 350, 200];
-const PLACE_BONUS_MIN = 100;
-const FIELD_BONUS = 40;       // per car beaten
-const TIME_BONUS = 50;        // per second under par
-const PAR_SLACK = 1.35;       // par is a flat-out race time plus this margin
 const EDGE_ASSIST_ZONE = 10;  // px inside the road edge where the player's steering assist starts
 const EDGE_ASSIST_RATE = 0.8; // rad/s
-
-const AI_NAMES = [
-  'ACE', 'BOLT', 'ZIP', 'NOVA', 'DASH', 'FLUX', 'VIPER', 'BLITZ', 'TURBO', 'NEON',
-  'RAZOR', 'COMET', 'GHOST', 'JINX', 'ROCKET', 'SURGE', 'ORBIT', 'STORM', 'BYTE', 'VOLT',
-];
-
-// Body / stripe pairs. Orange is reserved for the player's car.
-const AI_LIVERIES = [
-  [PAL.purple, PAL.lime], [PAL.lime, PAL.purple], ['#2ec4b6', PAL.white], [PAL.red, PAL.white],
-  ['#5fa8ff', PAL.orange], ['#ff6fb5', PAL.purple], [PAL.yellow, PAL.black], [PAL.white, PAL.purple],
-  ['#3a4cc0', PAL.lime], ['#2fa84f', PAL.white], ['#b3007a', PAL.orange], [PAL.purpleLight, PAL.white],
-  ['#8a5a2b', PAL.orange], ['#8a8aa0', PAL.red], ['#2b2b3b', PAL.lime], ['#7ee0a8', PAL.purple],
-  ['#ff8a65', PAL.white], ['#3fd0e0', PAL.black], ['#6b7d1a', PAL.yellow], ['#a01830', PAL.yellow],
-];
-const PLAYER_LIVERY = [PAL.orange, PAL.purple];
-const PLAYER_MAX_SLOT = 7;
 
 class Race {
   constructor(track, { opponents, withPlayer = true, seed = Date.now() }) {
@@ -70,6 +43,8 @@ class Race {
       this.addAtSlot(this.player, playerSlot);
     }
     this.updatePositions();
+    this.powerups = new PowerupField(track, this.rng, this.obstacles);
+    this.powerups.topUp(this.cars);
   }
 
   addAtSlot(car, slot) {
@@ -108,9 +83,14 @@ class Race {
     this.comboTimer -= dt;
     this.bumpCooldown -= dt;
     this.obstacles.update(dt);
+    this.powerups.update(dt);
 
     for (const car of this.cars) {
       if (car.ai) car.ai.update(dt, this);
+    }
+    for (const car of this.cars) {
+      if (car.input.usePowerup) usePowerup(car, this);
+      car.input.usePowerup = false;
     }
     for (const car of this.cars) {
       car.surface = track.surfaceAt(car.x, car.y, car.idx);
@@ -123,10 +103,12 @@ class Race {
     });
     for (const car of this.cars) {
       for (const hit of this.obstacles.collide(car)) this.onObstacleHit(car, hit);
+      for (const hit of this.powerups.collide(car)) this.onPowerupHit(car, hit);
       collideScenery(car, track);
       this.updateProgress(car, dt);
       this.emitEffects(car);
     }
+    this.powerups.topUp(this.cars);
     this.updatePositions();
     this.updateParticles(dt);
   }
@@ -145,63 +127,6 @@ class Race {
     car.angle = wrapAngle(car.angle + clamp(diff, -EDGE_ASSIST_RATE * dt, EDGE_ASSIST_RATE * dt));
   }
 
-  // ---------- scoring ----------
-
-  get playerScoring() {
-    return this.player && !this.player.finished;
-  }
-
-  addPoints(kind, pts, x, y, color = PAL.yellow) {
-    this.score[kind] += pts;
-    this.popups.push({ x, y, text: '+' + pts, color, life: 0.9 });
-  }
-
-  scoreBump(hit) {
-    const p = this.player;
-    if (!this.playerScoring || (hit.a !== p && hit.b !== p)) return;
-    if (hit.impact < MIN_BUMP_IMPACT || this.bumpCooldown > 0) return;
-    this.bumpCooldown = 0.3;
-    this.combo = this.comboTimer > 0 ? Math.min(COMBO_MAX, this.combo + 1) : 1;
-    this.comboTimer = COMBO_WINDOW;
-    const big = hit.impact >= BIG_BUMP_IMPACT;
-    this.addPoints('bumps', (big ? POINTS.bigBump : POINTS.bump) * this.combo, hit.x, hit.y - 6, big ? PAL.orange : PAL.yellow);
-    if (this.combo > 1) this.popups.push({ x: hit.x, y: hit.y - 16, text: 'COMBO X' + this.combo + '!', color: PAL.lime, life: 1.1 });
-    this.events.push({ type: 'bump', big });
-  }
-
-  onObstacleHit(car, hit) {
-    if (hit.type === 'cone') this.sparks(hit.x, hit.y, 40, [PAL.orange, PAL.white]);
-    if (hit.type === 'coin') this.sparks(hit.x, hit.y, 50, [PAL.yellow, PAL.white]);
-    if (car !== this.player || !this.playerScoring || !POINTS[hit.type]) return;
-    const color = hit.type === 'coin' ? PAL.yellow : hit.type === 'boost' ? PAL.orange : PAL.lime;
-    this.addPoints('pickups', POINTS[hit.type], hit.x, hit.y - 6, color);
-  }
-
-  awardFinish(car) {
-    const place = car.finishOrder;
-    this.score.place = PLACE_BONUS[place - 1] || PLACE_BONUS_MIN;
-    this.score.field = (this.cars.length - place) * FIELD_BONUS;
-    this.score.time = Math.max(0, Math.round((this.parTime - car.finishTime) * TIME_BONUS));
-    this.confetti(car.x, car.y);
-  }
-
-  sparks(x, y, impact, colors = [PAL.orange, PAL.yellow, PAL.white]) {
-    const n = Math.min(10, 2 + Math.floor(impact / 25));
-    for (let i = 0; i < n; i++) {
-      const a = this.rng() * TAU, s = 30 + this.rng() * impact;
-      const color = colors[Math.floor(this.rng() * colors.length)];
-      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + this.rng() * 0.3, color });
-    }
-  }
-
-  confetti(x, y) {
-    const colors = [PAL.orange, PAL.lime, PAL.purpleLight, PAL.yellow, PAL.white, PAL.cyan];
-    for (let i = 0; i < 70; i++) {
-      const a = this.rng() * TAU, s = 60 + this.rng() * 160;
-      const color = colors[Math.floor(this.rng() * colors.length)];
-      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.8 + this.rng() * 0.9, color });
-    }
-  }
 
   updateProgress(car, dt) {
     const track = this.track;
@@ -260,46 +185,7 @@ class Race {
     sorted.forEach((c, i) => { c.position = i + 1; });
     this.standings = sorted;
   }
-
-  emitEffects(car) {
-    if (car.skidding) {
-      const fx = Math.cos(car.angle), fy = Math.sin(car.angle);
-      const rx = -fy, ry = fx;
-      this.skids.push(
-        { x: car.x - fx * 4 + rx * 3, y: car.y - fy * 4 + ry * 3 },
-        { x: car.x - fx * 4 - rx * 3, y: car.y - fy * 4 - ry * 3 }
-      );
-      if (this.skids.length > 4000) this.skids.splice(0, this.skids.length - 4000);
-    }
-    if (car.surface === 'grass' && car.speed > 60 && this.rng() < 0.35) {
-      this.particles.push({
-        x: car.x - Math.cos(car.angle) * 6, y: car.y - Math.sin(car.angle) * 6,
-        vx: (this.rng() - 0.5) * 30, vy: (this.rng() - 0.5) * 30,
-        life: 0.4 + this.rng() * 0.3, color: this.rng() < 0.5 ? PAL.limeDeep : PAL.brown,
-      });
-    }
-    if (car.boostTimer > 0 && this.rng() < 0.6) {
-      this.particles.push({
-        x: car.x - Math.cos(car.angle) * 8, y: car.y - Math.sin(car.angle) * 8,
-        vx: (this.rng() - 0.5) * 30, vy: (this.rng() - 0.5) * 30,
-        life: 0.2 + this.rng() * 0.2, color: this.rng() < 0.5 ? PAL.orange : PAL.yellow,
-      });
-    }
-  }
-
-  updateParticles(dt) {
-    for (const p of this.particles) {
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.vx *= Math.exp(-4 * dt);
-      p.vy *= Math.exp(-4 * dt);
-      p.life -= dt;
-    }
-    this.particles = this.particles.filter((p) => p.life > 0);
-    for (const p of this.popups) {
-      p.y -= 22 * dt;
-      p.life -= dt;
-    }
-    this.popups = this.popups.filter((p) => p.life > 0);
-  }
 }
+
+mixInto(Race, RaceScoringMethods);
+mixInto(Race, RaceEffectsMethods);

@@ -3,23 +3,28 @@
 const COLLISION_RESTITUTION = 0.8;
 const MIN_BUMP_IMPULSE = 40;      // even a nudge pushes cars visibly apart
 const SPIN_IMPACT_THRESHOLD = 30; // px/s closing speed needed to knock a car out of control
+const BIG_KNOCKBACK = 2;          // a big car knocks a normal car this many times further than usual
 
 function carCircles(car) {
-  const fx = Math.cos(car.angle) * CAR_CIRCLE_OFFSET, fy = Math.sin(car.angle) * CAR_CIRCLE_OFFSET;
+  const offset = CAR_CIRCLE_OFFSET * car.sizeScale;
+  const fx = Math.cos(car.angle) * offset, fy = Math.sin(car.angle) * offset;
   return [[car.x + fx, car.y + fy], [car.x - fx, car.y - fy]];
 }
 
 // Car-vs-car: separate, exchange momentum along the contact normal, and spin both cars.
+// A big car against a normal one is immovable and knocks the other car twice as far.
 // Returns the impact point and strength, or null if they are not touching.
 function collideCars(a, b) {
-  if (Math.abs(a.x - b.x) > 20 || Math.abs(a.y - b.y) > 20) return null;
+  const reach = 10 * (a.sizeScale + b.sizeScale);
+  if (Math.abs(a.x - b.x) > reach || Math.abs(a.y - b.y) > reach) return null;
   const ca = carCircles(a), cb = carCircles(b);
+  const touching = CAR_RADIUS * (a.sizeScale + b.sizeScale);
   let best = null;
   for (const p of ca) {
     for (const q of cb) {
       const dx = q[0] - p[0], dy = q[1] - p[1];
       const d = Math.hypot(dx, dy);
-      const pen = CAR_RADIUS * 2 - d;
+      const pen = touching - d;
       if (pen > 0 && (!best || pen > best.pen)) best = { p, dx, dy, d, pen };
     }
   }
@@ -30,17 +35,22 @@ function collideCars(a, b) {
   else { nx = Math.cos(a.angle + Math.PI / 2); ny = Math.sin(a.angle + Math.PI / 2); }
 
   const ia = 1 / a.mass, ib = 1 / b.mass;
-  a.x -= nx * best.pen * ia / (ia + ib); a.y -= ny * best.pen * ia / (ia + ib);
-  b.x += nx * best.pen * ib / (ia + ib); b.y += ny * best.pen * ib / (ia + ib);
+  const bigVsNormal = a.isBig !== b.isBig;
+  // How much of the separation and of the impulse each car takes.
+  const pushA = bigVsNormal ? (a.isBig ? 0 : 1) : ia / (ia + ib);
+  const knockA = bigVsNormal ? (a.isBig ? 0 : BIG_KNOCKBACK) : 1;
+  const knockB = bigVsNormal ? (b.isBig ? 0 : BIG_KNOCKBACK) : 1;
+  a.x -= nx * best.pen * pushA; a.y -= ny * best.pen * pushA;
+  b.x += nx * best.pen * (1 - pushA); b.y += ny * best.pen * (1 - pushA);
 
   const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
   if (vn >= 0) return null; // already separating
   const j = Math.max(MIN_BUMP_IMPULSE, -(1 + COLLISION_RESTITUTION) * vn) / (ia + ib);
-  a.vx -= j * ia * nx; a.vy -= j * ia * ny;
-  b.vx += j * ib * nx; b.vy += j * ib * ny;
+  a.vx -= j * ia * knockA * nx; a.vy -= j * ia * knockA * ny;
+  b.vx += j * ib * knockB * nx; b.vy += j * ib * knockB * ny;
 
   const impact = -vn;
-  const cx = best.p[0] + nx * CAR_RADIUS, cy = best.p[1] + ny * CAR_RADIUS;
+  const cx = best.p[0] + nx * CAR_RADIUS * a.sizeScale, cy = best.p[1] + ny * CAR_RADIUS * a.sizeScale;
   let spun = false;
   if (impact > SPIN_IMPACT_THRESHOLD) {
     // Short, snappy loss of control: a wobble for taps, a quick spin for big hits.
@@ -49,8 +59,8 @@ function collideCars(a, b) {
     // Spin direction follows the torque of the impulse about each car's center.
     const torqueA = (cx - a.x) * -ny - (cy - a.y) * -nx;
     const torqueB = (cx - b.x) * ny - (cy - b.y) * nx;
-    a.spinOut(duration, (torqueA >= 0 ? 1 : -1) * rate);
-    b.spinOut(duration, (torqueB >= 0 ? 1 : -1) * rate);
+    if (knockA) a.spinOut(duration, (torqueA >= 0 ? 1 : -1) * rate);
+    if (knockB) b.spinOut(duration, (torqueB >= 0 ? 1 : -1) * rate);
     spun = true;
   }
   return { a, b, x: cx, y: cy, impact, spun };

@@ -13,6 +13,9 @@ const CAR_BOOST = 1.3;
 const CAR_BOOST_TIME = 1.2;
 const CAR_RADIUS = 4.2;       // collision shape: two circles along the car's length
 const CAR_CIRCLE_OFFSET = 3.5;
+const BIG_TIME = 7;           // seconds the Big powerup lasts
+const BIG_SCALE = 2;          // a big car is twice the size, for drawing and collisions
+const SLIDE_DRAG = 0.8;       // how fast a car sliding on a banana loses speed
 
 class Car {
   constructor({ name, body, stripe, isPlayer = false }) {
@@ -28,11 +31,14 @@ class Car {
     this.vy = 0;
     this.speedFactor = 1;
     this.boostTimer = 0;
-    this.oilCooldown = 0;
+    this.bigTimer = 0;
+    this.heldPowerup = null;      // 'banana' | 'big' | 'swap' | null - one item slot
+    this.heldPowerupTime = 0;     // how long the current item has been held
     this.surface = 'road';
-    this.input = { throttle: 0, brake: 0, steer: 0 };
+    this.input = { throttle: 0, brake: 0, steer: 0, usePowerup: false };
     this.spinTimer = 0;
     this.spinRate = 0;
+    this.spinKeepsTrajectory = false;
     this.skidding = false;
     this.ai = null;
 
@@ -62,6 +68,14 @@ class Car {
     return this.lapTimes.length ? Math.min(...this.lapTimes) : null;
   }
 
+  get isBig() {
+    return this.bigTimer > 0;
+  }
+
+  get sizeScale() {
+    return this.isBig ? BIG_SCALE : 1;
+  }
+
   get topSpeed() {
     const surface = this.surface === 'grass' ? GRASS_SPEED : 1;
     return CAR_SPEED * this.speedFactor * surface * (this.boostTimer > 0 ? CAR_BOOST : 1);
@@ -75,16 +89,33 @@ class Car {
     this.vy = 0;
     this.spinTimer = 0;
     this.spinRate = 0;
+    this.spinKeepsTrajectory = false;
     this.boostTimer = 0;
+    this.bigTimer = 0;
   }
 
-  spinOut(duration, rate) {
+  // Loss of control. With keepTrajectory (a banana) the car twirls but keeps sliding the way it
+  // was already travelling; otherwise (a bump) it scrubs speed and slides with little grip.
+  spinOut(duration, rate, { keepTrajectory = false } = {}) {
     if (this.isPlayer) duration *= 0.7;
-    if (this.spinTimer <= 0) this.spinRate = rate;
+    if (this.spinTimer <= 0) {
+      this.spinRate = rate;
+      this.spinKeepsTrajectory = keepTrajectory;
+    } else if (keepTrajectory) {
+      this.spinKeepsTrajectory = true;
+    }
     this.spinTimer = Math.max(this.spinTimer, duration);
   }
 
   update(dt) {
+    this.boostTimer = Math.max(0, this.boostTimer - dt);
+    this.bigTimer = Math.max(0, this.bigTimer - dt);
+    if (this.heldPowerup) this.heldPowerupTime += dt;
+    if (this.spinTimer > 0 && this.spinKeepsTrajectory) {
+      this.slideAlongTrajectory(dt);
+      return;
+    }
+
     const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
     let vF = this.vx * cos + this.vy * sin;
     let vL = -this.vx * sin + this.vy * cos;
@@ -92,8 +123,6 @@ class Car {
     const maxSp = this.topSpeed;
     let grip = CAR_GRIP;
     let turn = 0;
-    this.boostTimer = Math.max(0, this.boostTimer - dt);
-    this.oilCooldown = Math.max(0, this.oilCooldown - dt);
 
     if (this.spinTimer > 0) {
       // Loss of control: inputs ignored, the car rotates and slides.
@@ -123,5 +152,19 @@ class Car {
     this.y += this.vy * dt;
     this.angle = wrapAngle(this.angle + turn * dt);
     this.skidding = (Math.abs(vL) > 45 || this.spinTimer > 0) && this.surface !== 'grass';
+  }
+
+  // Banana spin: the body rotates while the car keeps moving in the same direction, slowly losing speed.
+  slideAlongTrajectory(dt) {
+    this.spinTimer -= dt;
+    const drag = Math.exp(-SLIDE_DRAG * dt);
+    this.vx *= drag;
+    this.vy *= drag;
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.angle = wrapAngle(this.angle + this.spinRate * dt);
+    this.spinRate *= Math.exp(-dt);
+    this.skidding = this.surface !== 'grass';
+    if (this.spinTimer <= 0) this.spinKeepsTrajectory = false;
   }
 }

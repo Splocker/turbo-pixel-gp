@@ -11,7 +11,7 @@ class AIDriver {
     this.speedFactor = speedFactor;
     this.lanes = rng() < 0.5 ? track.aiLaneL : track.aiLaneR;
     this.laneBias = (rng() - 0.5) * 8;
-    // A slow weave around the lane: sometimes it carries the car into the cones or the oil.
+    // A slow weave around the lane: sometimes it carries the car into the cones or a banana.
     this.weaveAmp = 2 + rng() * 6;
     this.weaveFreq = 0.6 + rng() * 0.8;
     this.weavePhase = rng() * TAU;
@@ -40,6 +40,7 @@ class AIDriver {
     }
     car.speedFactor = factor;
 
+    car.input.usePowerup = aiWantsToUsePowerup(car, race);
     this.updateAvoidance(dt, race);
 
     const la = 24 + sp * 0.12;

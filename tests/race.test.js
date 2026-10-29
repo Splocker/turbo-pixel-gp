@@ -104,8 +104,8 @@ test('pickups score only for the player and only before the finish', () => {
   race.onObstacleHit(ai, { type: 'coin', x: 0, y: 0 });
   assert.equal(race.score.pickups, 0);
   race.onObstacleHit(race.player, { type: 'coin', x: 0, y: 0 });
-  race.onObstacleHit(race.player, { type: 'oil', x: 0, y: 0 });
-  assert.equal(race.score.pickups, g.POINTS.coin, 'oil is not a pickup');
+  race.onObstacleHit(race.player, { type: 'tyreShove', x: 0, y: 0 });
+  assert.equal(race.score.pickups, g.POINTS.coin, 'shoving a tyre stack is not a pickup');
   race.player.finished = true;
   race.onObstacleHit(race.player, { type: 'boost', x: 0, y: 0 });
   assert.equal(race.score.pickups, g.POINTS.coin);
