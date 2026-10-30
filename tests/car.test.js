@@ -105,6 +105,41 @@ test('the player recovers from spins faster and is heavier than the AI', () => {
   assert.ok(player.mass > ai.mass);
 });
 
+test('a banana slip spins the body one full turn while the car slides on along its trajectory', () => {
+  const car = makeCar();
+  drive(car, 1, { throttle: 1 });
+  const heading = Math.atan2(car.vy, car.vx), speed = car.speed, angle = car.angle;
+  car.slipOut(1);
+  assert.ok(car.slipping);
+  let turned = 0, last = car.angle;
+  for (let i = 0; i < 30; i++) {
+    car.input.steer = -1; // ignored while slipping
+    car.update(DT);
+    turned += g.wrapAngle(car.angle - last);
+    last = car.angle;
+    assert.ok(Math.abs(g.wrapAngle(Math.atan2(car.vy, car.vx) - heading)) < 1e-9, 'trajectory unchanged');
+  }
+  assert.ok(turned > 1, 'the body spins');
+  assert.ok(car.speed < speed, 'loses some speed');
+  drive(car, g.SLIP_TIME, {});
+  assert.equal(car.slipping, false);
+  assert.ok(Math.abs(g.wrapAngle(car.angle - angle)) < 0.1, 'ends facing the way it was going');
+});
+
+test('BIG lasts BIG_TIME, grows to BIG_SCALE and shrinks back', () => {
+  const car = makeCar();
+  assert.equal(car.scale, 1);
+  car.bigTimer = g.BIG_TIME;
+  assert.ok(car.isBig);
+  drive(car, g.BIG_GROW + 0.05, {});
+  assert.equal(car.scale, g.BIG_SCALE);
+  drive(car, g.BIG_TIME - g.BIG_GROW - 0.2, {});
+  assert.ok(car.isBig && car.scale < g.BIG_SCALE && car.scale > 1, 'shrinking at the end');
+  drive(car, 0.2, {});
+  assert.equal(car.isBig, false);
+  assert.equal(car.scale, 1);
+});
+
 test('place resets motion, spin and boost', () => {
   const car = makeCar();
   drive(car, 1, { throttle: 1 });

@@ -135,6 +135,7 @@ class Game {
           this.race.resetCar(this.race.player);
           this.resetCooldown = 1.5;
         }
+        if (this.isPressed('Space')) this.race.useItem(this.race.player);
         break;
 
       case 'paused':
@@ -211,6 +212,11 @@ class Game {
         this.onPlayerFinish(e.car);
       } else if (e.type === 'bump') {
         this.shake = Math.max(this.shake, e.big ? 4 : 2);
+      } else if (e.type === 'powerup' && e.car.isPlayer && e.kind === 'swap') {
+        this.shake = Math.max(this.shake, 3);
+        this.showFlash('SWAP!', PAL.red, 1.2, 'UP TO ' + ordinal(e.car.position));
+      } else if (e.type === 'slip' && e.car.isPlayer) {
+        this.shake = Math.max(this.shake, 2);
       }
     }
     race.events.length = 0;
@@ -325,8 +331,8 @@ class Game {
     this.drawLogo(12);
     if (this.blink()) drawText(ctx, 'PRESS ENTER TO START', VIEW_W / 2, 98, PAL.white, 1, 'center', PAL.black);
     this.drawScoreTable(100, 112, 280, -1);
-    drawText(ctx, 'BUMP RIVALS  GRAB COINS  HIT BOOSTS  DODGE THE OIL', VIEW_W / 2, VIEW_H - 24, PAL.lime, 1, 'center', PAL.black);
-    drawText(ctx, 'W GAS   S BRAKE   A/D STEER   R RESET   ESC PAUSE', VIEW_W / 2, VIEW_H - 12, PAL.purpleLight, 1, 'center', PAL.black);
+    drawText(ctx, 'GRAB POWERUPS  BUMP RIVALS  HIT BOOSTS  DODGE BANANAS', VIEW_W / 2, VIEW_H - 24, PAL.lime, 1, 'center', PAL.black);
+    drawText(ctx, 'W GAS  S BRAKE  A/D STEER  SPACE ITEM  R RESET  ESC PAUSE', VIEW_W / 2, VIEW_H - 12, PAL.purpleLight, 1, 'center', PAL.black);
   }
 
   drawScoreTable(x, y, w, highlight) {

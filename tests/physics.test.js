@@ -68,6 +68,35 @@ test('cars already moving apart are only separated, not bounced', () => {
   assert.equal(a.vx, -50);
 });
 
+function big(car) {
+  car.bigTimer = g.BIG_TIME - g.BIG_GROW; // fully grown
+  return car;
+}
+
+test('a big car does not move when hit, and knocks a normal car twice as far', () => {
+  // The same hit twice: once between normal cars, once with b big.
+  const a1 = carAt(0, 0, 0, 100, 0), b1 = carAt(12, 0, 0, 0, 0);
+  g.collideCars(a1, b1);
+  const a2 = carAt(0, 0, 0, 100, 0), b2 = big(carAt(12 + g.CAR_RADIUS * (g.BIG_SCALE - 1), 0, 0, 0, 0));
+  const bx = b2.x;
+  const hit = g.collideCars(a2, b2);
+  assert.ok(hit && hit.spun);
+  assert.equal(b2.x, bx, 'big car is not pushed');
+  assert.equal(b2.vx, 0, 'big car keeps its speed');
+  assert.equal(b2.spinTimer, 0, 'big car is not spun');
+  assert.ok(Math.abs((a2.vx - 100) / (a1.vx - 100) - g.BIG_KNOCK) < 1e-9, 'knocked twice as hard');
+  assert.ok(a2.spinTimer > 0);
+});
+
+test('two big cars bump each other like two normal cars', () => {
+  const a = big(carAt(0, 0, 0, 100, 0)), b = big(carAt(12 * g.BIG_SCALE, 0, 0, -100, 0));
+  const hit = g.collideCars(a, b);
+  assert.ok(hit, 'big cars collide at their bigger size');
+  assert.ok(Math.abs(a.vx + b.vx) < 1e-6, 'momentum conserved');
+  assert.ok(a.vx < 100 && b.vx > -100, 'both get bounced');
+  assert.ok(a.spinTimer > 0 && b.spinTimer > 0);
+});
+
 test('resolveCarCollisions reports every touching pair once', () => {
   const cars = [carAt(0, 0, 0, 100, 0), carAt(12, 0, 0, -100, 0), carAt(500, 500, 0, 0, 0)];
   const hits = [];

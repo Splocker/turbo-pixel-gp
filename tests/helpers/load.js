@@ -11,7 +11,7 @@ const vm = require('node:vm');
 const ROOT = path.join(__dirname, '..', '..');
 
 // Game logic in page load order. font.js, render.js and game.js need a canvas/DOM and are not loaded.
-const LOGIC_SCRIPTS = ['util', 'track', 'obstacles', 'car', 'ai', 'physics', 'race', 'scores'];
+const LOGIC_SCRIPTS = ['util', 'track', 'obstacles', 'car', 'ai', 'physics', 'powerups', 'race', 'scores'];
 
 // In-memory stand-in for window.localStorage.
 function memoryStorage() {

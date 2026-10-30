@@ -97,9 +97,11 @@ function buildTyreSprite() {
 }
 
 function buildConeSprite() {
-  const rows = ['..o..', '.ooo.', '.www.', 'ooooo', 'kkkkk'];
-  const colors = { o: PAL.orange, w: PAL.white, k: PAL.black };
-  const cv = makeCanvas(5, 5);
+  return buildPixelSprite(['..o..', '.ooo.', '.www.', 'ooooo', 'kkkkk'], { o: PAL.orange, w: PAL.white, k: PAL.black });
+}
+
+function buildPixelSprite(rows, colors) {
+  const cv = makeCanvas(rows[0].length, rows.length);
   const g = cv.getContext('2d');
   rows.forEach((row, y) => [...row].forEach((ch, x) => {
     if (ch === '.') return;
@@ -107,6 +109,52 @@ function buildConeSprite() {
     g.fillRect(x, y, 1, 1);
   }));
   return cv;
+}
+
+const BANANA_PIXELS = [
+  '.....k.',
+  '....kyk',
+  '....kyk',
+  '...kyyk',
+  '.kkyyok',
+  'kyyyok.',
+  '.kkkk..',
+];
+
+function buildBananaSprite() {
+  return buildPixelSprite(BANANA_PIXELS, { k: PAL.black, y: PAL.yellow, o: PAL.orangeDark });
+}
+
+// Pickup boxes: a colored crate with an icon saying what's inside.
+const POWERUP_ICONS = {
+  banana: ['....i', '...ii', '...ii', '..ii.', '.ii..', 'ii...', '.....'],
+  big: ['..i..', '.iii.', 'iiiii', '.iii.', '.iii.', '.iii.', '.....'],
+  swap: ['.i...', 'iii..', '.i...', '.i.i.', '...i.', '..iii', '...i.'],
+};
+const POWERUP_COLORS = {
+  banana: [PAL.purple, PAL.yellow],
+  big: [PAL.orange, PAL.white],
+  swap: [PAL.red, PAL.white],
+};
+
+function buildPowerupSprites() {
+  const sprites = {};
+  for (const kind in POWERUP_ICONS) {
+    const [fill, icon] = POWERUP_COLORS[kind];
+    const rows = [];
+    for (let y = 0; y < 11; y++) {
+      let row = '';
+      for (let x = 0; x < 11; x++) {
+        const edge = x === 0 || y === 0 || x === 10 || y === 10;
+        const corner = (x === 0 || x === 10) && (y === 0 || y === 10);
+        const ch = (POWERUP_ICONS[kind][y - 2] || '')[x - 3];
+        row += corner ? '.' : edge ? 'k' : ch === 'i' ? 'i' : x === 1 || y === 1 ? 'h' : 'f';
+      }
+      rows.push(row);
+    }
+    sprites[kind] = buildPixelSprite(rows, { k: PAL.black, f: fill, h: shade(fill, 1.3), i: icon });
+  }
+  return sprites;
 }
 
 // Two frames: face-on and edge-on, alternated so the coin appears to spin.
@@ -191,20 +239,7 @@ function buildTrackCanvas(track) {
   // Road decals (snapped with everything else so rotated edges stay crisp).
   const items = obstacleLayout(track);
   for (const o of items) {
-    if (o.type === 'oil') {
-      g.fillStyle = PAL.black;
-      for (const [dx, dy, r] of [[0, 0, 10], [-6, 4, 7], [6, -3, 7], [3, 6, 5]]) {
-        g.beginPath();
-        g.arc(o.x + dx, o.y + dy, r, 0, TAU);
-        g.fill();
-      }
-      g.fillStyle = PAL.purpleDark;
-      for (const [dx, dy, r] of [[-3, -3, 3], [5, 1, 2]]) {
-        g.beginPath();
-        g.arc(o.x + dx, o.y + dy, r, 0, TAU);
-        g.fill();
-      }
-    } else if (o.type === 'boost') {
+    if (o.type === 'boost') {
       const i = o.idx;
       g.save();
       g.setTransform(track.tx[i], track.ty[i], track.nx[i], track.ny[i], o.x, o.y);
@@ -303,12 +338,6 @@ function buildTrackCanvas(track) {
     drawText(g, 'TURBO PIXEL GP', x, gs.y + 2, PAL.orange, 1, 'left', PAL.purpleDeep);
   }
 
-  // Tyre-stack islands in the middle of the road.
-  const tyre = buildTyreSprite();
-  for (const o of items) {
-    if (o.type === 'tyre') g.drawImage(tyre, Math.round(o.x - tyre.width / 2), Math.round(o.y - tyre.height / 2));
-  }
-
   // Trees with a soft pixel shadow.
   const tree = buildTreeSprite();
   const shadow = buildRoundSprite(TREE_SPRITE_RADIUS - 1, () => '#97ad14');
@@ -366,6 +395,9 @@ class Renderer {
     this.minimap = buildMinimap(track);
     this.spriteCache = new Map();
     this.cone = buildConeSprite();
+    this.tyre = buildTyreSprite(); // tyre stacks can be shoved by a big car, so they're drawn live
+    this.banana = buildBananaSprite();
+    this.powerupSprites = buildPowerupSprites();
     this.coin = buildCoinSprites();
     this.resetWorld();
   }
@@ -405,15 +437,23 @@ class Renderer {
 
     ctx.drawImage(this.world, camX, camY, VIEW_W, VIEW_H, 0, 0, VIEW_W, VIEW_H);
     this.drawObstacles(race.obstacles, camX, camY);
+    this.drawPowerups(race.powerups, camX, camY);
 
-    const visible = race.cars.filter((c) => c.x > camX - 20 && c.x < camX + VIEW_W + 20 && c.y > camY - 20 && c.y < camY + VIEW_H + 20);
+    // Big cars are drawn last so they sit on top of the pack.
+    const visible = race.cars
+      .filter((c) => c.x > camX - 40 && c.x < camX + VIEW_W + 40 && c.y > camY - 40 && c.y < camY + VIEW_H + 40)
+      .sort((a, b) => a.scale - b.scale);
+    const blitCar = (img, car, dx, dy) => {
+      const size = Math.round(17 * car.scale);
+      ctx.drawImage(img, Math.round(car.x - camX - size / 2) + dx, Math.round(car.y - camY - size / 2) + dy, size, size);
+    };
     for (const car of visible) {
       const s = this.spritesFor(car.body, car.stripe);
-      ctx.drawImage(s.shadows[dirIndex(car.angle)], Math.round(car.x - camX - 8.5) + 1, Math.round(car.y - camY - 8.5) + 2);
+      blitCar(s.shadows[dirIndex(car.angle)], car, Math.round(car.scale), Math.round(2 * car.scale));
     }
     for (const car of visible) {
       const s = this.spritesFor(car.body, car.stripe);
-      ctx.drawImage(s.sprites[dirIndex(car.angle)], Math.round(car.x - camX - 8.5), Math.round(car.y - camY - 8.5));
+      blitCar(s.sprites[dirIndex(car.angle)], car, 0, 0);
     }
 
     for (const p of race.particles) {
@@ -424,7 +464,7 @@ class Renderer {
     // Marker over the player's car so it's easy to find in a big pack.
     const pl = race.player;
     if (pl) {
-      const x = Math.round(pl.x - camX), y = Math.round(pl.y - camY) - 14;
+      const x = Math.round(pl.x - camX), y = Math.round(pl.y - camY - 6 - 8 * pl.scale);
       ctx.fillStyle = PAL.black;
       ctx.fillRect(x - 4, y - 1, 9, 5);
       ctx.fillStyle = PAL.orange;
@@ -448,6 +488,20 @@ class Renderer {
     const frame = Math.floor(obs.time * 6) % 2;
     for (const o of obs.coins) if (o.timer <= 0 && near(o)) blit(this.coin[frame], o);
     for (const o of obs.cones) if (near(o)) blit(this.cone, o);
+    for (const o of obs.tyres) if (near(o)) blit(this.tyre, o);
+  }
+
+  drawPowerups(pw, camX, camY) {
+    const ctx = this.ctx;
+    for (const b of pw.bananas) {
+      const img = this.banana;
+      ctx.drawImage(img, Math.round(b.x - camX - img.width / 2), Math.round(b.y - camY - img.height / 2));
+    }
+    for (const p of pw.items) {
+      const img = this.powerupSprites[p.kind];
+      const bob = Math.round(Math.sin(pw.time * 5 + p.idx) * 1.5);
+      ctx.drawImage(img, Math.round(p.x - camX - img.width / 2), Math.round(p.y - camY - img.height / 2) + bob);
+    }
   }
 
   drawHUD(race, now) {
@@ -491,9 +545,21 @@ class Renderer {
       drawText(ctx, car.name, 32, y, car.isPlayer ? PAL.orange : PAL.white);
     });
 
-    if (pl.boostTimer > 0) {
-      drawText(ctx, 'BOOST!', 8, VIEW_H - 22, blink ? PAL.orange : PAL.yellow, 2, 'left', PAL.black);
+    // Held item, used with SPACE.
+    const ix = 6, iy = VIEW_H - 50;
+    drawPanel(ctx, ix, iy, 40, 44);
+    drawText(ctx, 'ITEM', ix + 20, iy + 3, PAL.lime, 1, 'center');
+    if (pl.item) {
+      ctx.drawImage(this.powerupSprites[pl.item], ix + 9, iy + 12, 22, 22);
+      drawText(ctx, 'SPACE', ix + 20, iy + 36, blink ? PAL.white : PAL.purpleLight, 1, 'center');
+    } else {
+      drawText(ctx, '-', ix + 20, iy + 20, PAL.purpleLight, 1, 'center');
     }
+
+    const status = [];
+    if (pl.isBig) status.push(['BIG ' + Math.ceil(pl.bigTimer), pl.bigTimer < 2 && !blink ? PAL.white : PAL.orange]);
+    if (pl.boostTimer > 0) status.push(['BOOST!', blink ? PAL.orange : PAL.yellow]);
+    status.forEach(([text, color], k) => drawText(ctx, text, ix + 48, VIEW_H - 22 - k * 18, color, 2, 'left', PAL.black));
 
     // Minimap.
     const mm = this.minimap;

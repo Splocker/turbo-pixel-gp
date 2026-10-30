@@ -6,7 +6,7 @@ const MAX_OPPONENTS = 20;
 const DEFAULT_OPPONENTS = 4;
 
 // Arcade scoring. Every race pays out something; bumping and grabbing stuff pays the most.
-const POINTS = { bump: 25, bigBump: 75, coin: 10, boost: 5, cone: 5 };
+const POINTS = { bump: 25, bigBump: 75, coin: 10, boost: 5, cone: 5, powerup: 10, banana: 50 };
 const BIG_BUMP_IMPACT = 90;
 const MIN_BUMP_IMPACT = 20;
 const COMBO_WINDOW = 2;
@@ -69,6 +69,8 @@ class Race {
       this.player = new Car({ name: 'YOU', body: PLAYER_LIVERY[0], stripe: PLAYER_LIVERY[1], isPlayer: true });
       this.addAtSlot(this.player, playerSlot);
     }
+    this.powerups = new Powerups(track, this.rng, this.obstacles);
+    this.powerups.fill(this.cars);
     this.updatePositions();
   }
 
@@ -108,6 +110,7 @@ class Race {
     this.comboTimer -= dt;
     this.bumpCooldown -= dt;
     this.obstacles.update(dt);
+    this.powerups.update(dt, this.cars);
 
     for (const car of this.cars) {
       if (car.ai) car.ai.update(dt, this);
@@ -123,6 +126,7 @@ class Race {
     });
     for (const car of this.cars) {
       for (const hit of this.obstacles.collide(car)) this.onObstacleHit(car, hit);
+      this.collectPowerups(car);
       collideScenery(car, track);
       this.updateProgress(car, dt);
       this.emitEffects(car);
@@ -171,10 +175,93 @@ class Race {
 
   onObstacleHit(car, hit) {
     if (hit.type === 'cone') this.sparks(hit.x, hit.y, 40, [PAL.orange, PAL.white]);
+    if (hit.type === 'tyre') this.sparks(hit.x, hit.y, 60, [PAL.black, PAL.white, PAL.asphaltLight]);
     if (hit.type === 'coin') this.sparks(hit.x, hit.y, 50, [PAL.yellow, PAL.white]);
     if (car !== this.player || !this.playerScoring || !POINTS[hit.type]) return;
     const color = hit.type === 'coin' ? PAL.yellow : hit.type === 'boost' ? PAL.orange : PAL.lime;
     this.addPoints('pickups', POINTS[hit.type], hit.x, hit.y - 6, color);
+  }
+
+  // ---------- powerups ----------
+
+  collectPowerups(car) {
+    for (const p of this.powerups.touching(car)) {
+      if (!this.applyPowerup(car, p.kind)) continue;
+      this.powerups.take(p, this.cars);
+      this.sparks(p.x, p.y, 50, [PAL.white, PAL.lime, PAL.yellow]);
+      const label = { banana: 'BANANA!', big: 'BIG!', swap: 'SWAP!' }[p.kind];
+      this.popups.push({ x: car.x, y: car.y - 16, text: label, color: PAL.white, life: 1 });
+      if (car === this.player && this.playerScoring) this.addPoints('pickups', POINTS.powerup, p.x, p.y - 6, PAL.lime);
+      this.events.push({ type: 'powerup', car, kind: p.kind });
+    }
+    const banana = this.powerups.bananaUnder(car);
+    if (banana) this.onBanana(car, banana);
+  }
+
+  get leader() {
+    return this.standings.find((c) => !c.finished);
+  }
+
+  // A car holds one banana at a time, and the leader has nobody to swap with.
+  canUsePowerup(car, kind) {
+    if (car.finished) return false;
+    if (kind === 'banana') return !car.item;
+    if (kind === 'swap') return !!this.leader && this.leader !== car;
+    return kind === 'big';
+  }
+
+  // Returns false (and leaves the pickup on the track) if the car can't use it right now.
+  applyPowerup(car, kind) {
+    if (!this.canUsePowerup(car, kind)) return false;
+    switch (kind) {
+      case 'banana':
+        car.item = 'banana';
+        break;
+      case 'big':
+        // Picking up another while big tops the timer up without shrinking first.
+        car.bigTimer = car.isBig ? Math.max(car.bigTimer, BIG_TIME - BIG_GROW) : BIG_TIME;
+        break;
+      case 'swap':
+        this.swapPlaces(car, this.leader);
+        this.updatePositions();
+        break;
+    }
+    return true;
+  }
+
+  // Drops the held banana. Returns whether there was one.
+  useItem(car) {
+    if (!this.running || car.item !== 'banana') return false;
+    car.item = null;
+    this.powerups.drop(car);
+    return true;
+  }
+
+  onBanana(car, banana) {
+    this.sparks(banana.x, banana.y, 40, [PAL.yellow, PAL.white]);
+    if (car.isBig) return; // squashed flat, no effect
+    // Spin away from the side the banana was on.
+    const side = -(banana.x - car.x) * Math.sin(car.angle) + (banana.y - car.y) * Math.cos(car.angle);
+    car.slipOut(side >= 0 ? -1 : 1);
+    this.events.push({ type: 'slip', car });
+    if (banana.owner === this.player && car !== this.player && this.playerScoring) {
+      this.addPoints('bumps', POINTS.banana, car.x, car.y - 6, PAL.lime);
+    }
+  }
+
+  // Swap with 1st: the two cars trade spots on the circuit along with their race progress. Each
+  // keeps its own speed and its heading relative to the road, so both carry straight on.
+  swapPlaces(a, b) {
+    const t = this.track;
+    const turn = wrapAngle(Math.atan2(t.ty[b.idx], t.tx[b.idx]) - Math.atan2(t.ty[a.idx], t.tx[a.idx]));
+    for (const key of ['x', 'y', 'idx', 'totalDist', 'lapsCompleted']) [a[key], b[key]] = [b[key], a[key]];
+    for (const [car, by] of [[a, turn], [b, -turn]]) {
+      const c = Math.cos(by), s = Math.sin(by);
+      [car.vx, car.vy] = [car.vx * c - car.vy * s, car.vx * s + car.vy * c];
+      car.angle = wrapAngle(car.angle + by);
+      car.lostTimer = 0;
+      car.wrongWayTimer = 0;
+    }
   }
 
   awardFinish(car) {

@@ -13,6 +13,11 @@ const CAR_BOOST = 1.3;
 const CAR_BOOST_TIME = 1.2;
 const CAR_RADIUS = 4.2;       // collision shape: two circles along the car's length
 const CAR_CIRCLE_OFFSET = 3.5;
+const BIG_TIME = 7;           // seconds a BIG powerup lasts
+const BIG_SCALE = 2;
+const BIG_GROW = 0.25;        // seconds to grow at the start and shrink at the end
+const SLIP_TIME = 1.0;        // banana spin-out
+const SLIP_DRAG = 0.8;        // per-second speed loss while sliding on a banana
 
 class Car {
   constructor({ name, body, stripe, isPlayer = false }) {
@@ -28,7 +33,9 @@ class Car {
     this.vy = 0;
     this.speedFactor = 1;
     this.boostTimer = 0;
-    this.oilCooldown = 0;
+    this.bigTimer = 0;
+    this.item = null;         // held powerup waiting to be used ('banana')
+    this.slipping = false;    // banana spin: the body turns but the car keeps its trajectory
     this.surface = 'road';
     this.input = { throttle: 0, brake: 0, steer: 0 };
     this.spinTimer = 0;
@@ -62,6 +69,17 @@ class Car {
     return this.lapTimes.length ? Math.min(...this.lapTimes) : null;
   }
 
+  get isBig() {
+    return this.bigTimer > 0;
+  }
+
+  // Size multiplier for drawing and collisions. Grows in and shrinks out rather than popping.
+  get scale() {
+    if (this.bigTimer <= 0) return 1;
+    const t = Math.min(1, (BIG_TIME - this.bigTimer) / BIG_GROW, this.bigTimer / BIG_GROW);
+    return 1 + (BIG_SCALE - 1) * clamp(t, 0, 1);
+  }
+
   get topSpeed() {
     const surface = this.surface === 'grass' ? GRASS_SPEED : 1;
     return CAR_SPEED * this.speedFactor * surface * (this.boostTimer > 0 ? CAR_BOOST : 1);
@@ -75,6 +93,7 @@ class Car {
     this.vy = 0;
     this.spinTimer = 0;
     this.spinRate = 0;
+    this.slipping = false;
     this.boostTimer = 0;
   }
 
@@ -82,6 +101,15 @@ class Car {
     if (this.isPlayer) duration *= 0.7;
     if (this.spinTimer <= 0) this.spinRate = rate;
     this.spinTimer = Math.max(this.spinTimer, duration);
+  }
+
+  // Banana: one full turn of the body while the car slides on along its current trajectory,
+  // ending up facing the way it was going.
+  slipOut(dir = 1) {
+    const duration = SLIP_TIME * (this.isPlayer ? 0.7 : 1);
+    this.spinTimer = duration;
+    this.spinRate = Math.sign(dir || 1) * TAU / duration;
+    this.slipping = true;
   }
 
   update(dt) {
@@ -93,7 +121,22 @@ class Car {
     let grip = CAR_GRIP;
     let turn = 0;
     this.boostTimer = Math.max(0, this.boostTimer - dt);
-    this.oilCooldown = Math.max(0, this.oilCooldown - dt);
+    this.bigTimer = Math.max(0, this.bigTimer - dt);
+
+    if (this.spinTimer > 0 && this.slipping) {
+      const step = Math.min(dt, this.spinTimer); // so the turn ends exactly where it started
+      this.spinTimer -= dt;
+      const keep = Math.exp(-SLIP_DRAG * dt);
+      this.vx *= keep;
+      this.vy *= keep;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      this.angle = wrapAngle(this.angle + this.spinRate * step);
+      if (this.spinTimer <= 0) this.slipping = false;
+      this.skidding = this.surface !== 'grass';
+      return;
+    }
+    this.slipping = false;
 
     if (this.spinTimer > 0) {
       // Loss of control: inputs ignored, the car rotates and slides.

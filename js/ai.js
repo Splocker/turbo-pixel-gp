@@ -3,6 +3,9 @@
 const AI_PACK_GAP = 250;   // distance from the player at which the pack rubber band kicks in
 const AI_AHEAD_SPEED = 0.8;
 const AI_BEHIND_SPEED = 1.0;
+const AI_BANANA_RANGE = 70;  // drop a held banana on a car this close behind
+const AI_SEEK_RANGE = 110;   // looks this far up the road for a pickup worth grabbing
+const AI_SEEK_SWERVE = 28;   // ...but won't leave its lane by more than this to get it
 
 class AIDriver {
   constructor(car, track, rng, { speedFactor = 0.9 } = {}) {
@@ -11,7 +14,7 @@ class AIDriver {
     this.speedFactor = speedFactor;
     this.lanes = rng() < 0.5 ? track.aiLaneL : track.aiLaneR;
     this.laneBias = (rng() - 0.5) * 8;
-    // A slow weave around the lane: sometimes it carries the car into the cones or the oil.
+    // A slow weave around the lane: sometimes it carries the car into the cones.
     this.weaveAmp = 2 + rng() * 6;
     this.weaveFreq = 0.6 + rng() * 0.8;
     this.weavePhase = rng() * TAU;
@@ -22,6 +25,8 @@ class AIDriver {
     this.avoidTimer = 0;
     this.stuckTimer = 0;
     this.reverseTimer = 0;
+    this.itemTimer = 0;
+    this.itemPatience = 3 + rng() * 6; // drops a held banana after this long even with nobody behind
   }
 
   update(dt, race) {
@@ -41,6 +46,7 @@ class AIDriver {
     car.speedFactor = factor;
 
     this.updateAvoidance(dt, race);
+    this.updateItem(dt, race);
 
     const la = 24 + sp * 0.12;
     const j = track.wrap(car.idx + Math.round(la / track.spacing));
@@ -49,7 +55,8 @@ class AIDriver {
     this.startBlend = Math.max(0, this.startBlend - dt / 3);
     const weave = Math.sin(race.time * this.weaveFreq + this.weavePhase) * this.weaveAmp;
     const lane = lerp(this.lanes[j] + this.laneBias + weave, this.startLane, this.startBlend);
-    const off = clamp(lane + this.avoid, -limit, limit);
+    const seek = this.startBlend < 0.4 ? this.pickupLane(race) : null;
+    const off = clamp((seek === null ? lane : seek) + this.avoid, -limit, limit);
     const tx = track.x[j] + track.nx[j] * off;
     const ty = track.y[j] + track.ny[j] * off;
     const err = wrapAngle(Math.atan2(ty - car.y, tx - car.x) - car.angle);
@@ -93,6 +100,44 @@ class AIDriver {
       inp.throttle = 0;
       inp.brake = 0;
     }
+  }
+
+  // Lateral offset of a usable pickup just up the road that is worth a small detour, or null.
+  // Swaps left off the road are a gamble the AI doesn't take.
+  pickupLane(race) {
+    const car = this.car, track = this.track;
+    let best = null, bestAhead = AI_SEEK_RANGE;
+    for (const p of race.powerups.items) {
+      let ds = p.idx - car.idx;
+      if (ds > track.n / 2) ds -= track.n;
+      if (ds < -track.n / 2) ds += track.n;
+      const ahead = ds * track.spacing;
+      if (ahead < 8 || ahead > bestAhead) continue;
+      if (Math.abs(p.lat) > TRACK_HALF_WIDTH - 6) continue;
+      if (Math.abs(p.lat - (this.lanes[p.idx] + this.laneBias)) > AI_SEEK_SWERVE) continue;
+      if (!race.canUsePowerup(car, p.kind)) continue;
+      best = p;
+      bestAhead = ahead;
+    }
+    return best ? best.lat : null;
+  }
+
+  // Drop a held banana in front of a car close behind, or just get rid of it after a while.
+  updateItem(dt, race) {
+    const car = this.car;
+    if (!car.item) {
+      this.itemTimer = 0;
+      return;
+    }
+    this.itemTimer += dt;
+    const fx = Math.cos(car.angle), fy = Math.sin(car.angle);
+    const chased = race.cars.some((o) => {
+      if (o === car) return false;
+      const dx = o.x - car.x, dy = o.y - car.y;
+      const ahead = dx * fx + dy * fy, side = -dx * fy + dy * fx;
+      return ahead < -10 && ahead > -AI_BANANA_RANGE && Math.abs(side) < 14;
+    });
+    if (chased || this.itemTimer > this.itemPatience) race.useItem(car);
   }
 
   // Look for a car directly ahead; if found, go around it on a side that is free.
