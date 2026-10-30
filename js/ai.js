@@ -11,7 +11,7 @@ class AIDriver {
     this.speedFactor = speedFactor;
     this.lanes = rng() < 0.5 ? track.aiLaneL : track.aiLaneR;
     this.laneBias = (rng() - 0.5) * 8;
-    // A slow weave around the lane: sometimes it carries the car into the cones or the oil.
+    // A slow weave around the lane: sometimes it carries the car into the cones.
     this.weaveAmp = 2 + rng() * 6;
     this.weaveFreq = 0.6 + rng() * 0.8;
     this.weavePhase = rng() * TAU;
@@ -22,6 +22,8 @@ class AIDriver {
     this.avoidTimer = 0;
     this.stuckTimer = 0;
     this.reverseTimer = 0;
+    this.itemSteer = 0;     // lateral shift toward pickups and away from bananas (aiItems.js)
+    this.itemHeldTime = 0;
   }
 
   update(dt, race) {
@@ -40,6 +42,7 @@ class AIDriver {
     }
     car.speedFactor = factor;
 
+    aiUseItem(this, race, dt);
     this.updateAvoidance(dt, race);
 
     const la = 24 + sp * 0.12;
@@ -49,7 +52,9 @@ class AIDriver {
     this.startBlend = Math.max(0, this.startBlend - dt / 3);
     const weave = Math.sin(race.time * this.weaveFreq + this.weavePhase) * this.weaveAmp;
     const lane = lerp(this.lanes[j] + this.laneBias + weave, this.startLane, this.startBlend);
-    const off = clamp(lane + this.avoid, -limit, limit);
+    const wantItemSteer = aiPickupOffset(this, race, lane) + aiBananaDodge(this, race, lane);
+    this.itemSteer += (wantItemSteer - this.itemSteer) * Math.min(1, 3 * dt);
+    const off = clamp(lane + this.avoid + this.itemSteer, -limit, limit);
     const tx = track.x[j] + track.nx[j] * off;
     const ty = track.y[j] + track.ny[j] * off;
     const err = wrapAngle(Math.atan2(ty - car.y, tx - car.x) - car.angle);

@@ -13,6 +13,7 @@ const CAR_BOOST = 1.3;
 const CAR_BOOST_TIME = 1.2;
 const CAR_RADIUS = 4.2;       // collision shape: two circles along the car's length
 const CAR_CIRCLE_OFFSET = 3.5;
+const GLIDE_FRICTION = 0.4;   // a banana spin barely slows the car, so it slides on along its path
 
 class Car {
   constructor({ name, body, stripe, isPlayer = false }) {
@@ -28,12 +29,14 @@ class Car {
     this.vy = 0;
     this.speedFactor = 1;
     this.boostTimer = 0;
-    this.oilCooldown = 0;
     this.surface = 'road';
     this.input = { throttle: 0, brake: 0, steer: 0 };
     this.spinTimer = 0;
     this.spinRate = 0;
+    this.gliding = false;      // spinning on a banana: no grip, velocity carries on
     this.skidding = false;
+    this.heldItem = null;      // 'banana', 'big' or 'swap'
+    this.bigTimer = 0;
     this.ai = null;
 
     // Race progress
@@ -62,6 +65,14 @@ class Car {
     return this.lapTimes.length ? Math.min(...this.lapTimes) : null;
   }
 
+  get isBig() {
+    return this.bigTimer > 0;
+  }
+
+  get sizeScale() {
+    return this.isBig ? BIG_SCALE : 1;
+  }
+
   get topSpeed() {
     const surface = this.surface === 'grass' ? GRASS_SPEED : 1;
     return CAR_SPEED * this.speedFactor * surface * (this.boostTimer > 0 ? CAR_BOOST : 1);
@@ -75,6 +86,7 @@ class Car {
     this.vy = 0;
     this.spinTimer = 0;
     this.spinRate = 0;
+    this.gliding = false;
     this.boostTimer = 0;
   }
 
@@ -82,6 +94,13 @@ class Car {
     if (this.isPlayer) duration *= 0.7;
     if (this.spinTimer <= 0) this.spinRate = rate;
     this.spinTimer = Math.max(this.spinTimer, duration);
+  }
+
+  // Banana spin: the car rotates out of control while its velocity keeps the same direction.
+  glideSpin(duration, rate) {
+    this.spinRate = rate;
+    this.spinTimer = Math.max(this.spinTimer, duration);
+    this.gliding = true;
   }
 
   update(dt) {
@@ -93,9 +112,17 @@ class Car {
     let grip = CAR_GRIP;
     let turn = 0;
     this.boostTimer = Math.max(0, this.boostTimer - dt);
-    this.oilCooldown = Math.max(0, this.oilCooldown - dt);
+    this.bigTimer = Math.max(0, this.bigTimer - dt);
 
-    if (this.spinTimer > 0) {
+    if (this.spinTimer > 0 && this.gliding) {
+      this.spinTimer -= dt;
+      turn = this.spinRate;
+      const friction = Math.exp(-GLIDE_FRICTION * dt);
+      vF *= friction;
+      vL *= friction;
+      grip = 0;
+      if (this.spinTimer <= 0) this.gliding = false;
+    } else if (this.spinTimer > 0) {
       // Loss of control: inputs ignored, the car rotates and slides.
       this.spinTimer -= dt;
       turn = this.spinRate;

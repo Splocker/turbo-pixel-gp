@@ -24,14 +24,14 @@ const first = (obs, type) => obs.items.find((o) => o.type === type);
 test('the course has no pinball bumpers or sliding blocks, only the friendly obstacle types', () => {
   // placeObstacles skips types it doesn't know, so check the hand-written layout itself too:
   // a typo or a removed type would otherwise vanish silently.
-  const layoutTypes = new Set(['coins', 'cones', 'island', 'oil', 'boost']);
+  const layoutTypes = new Set(['coins', 'cones', 'island', 'boost']);
   for (const e of g.OBSTACLE_LAYOUT) assert.ok(layoutTypes.has(e.type), `unknown layout entry type ${e.type}`);
   for (const e of g.OBSTACLE_LAYOUT) {
     const i = track.indexAt(e.d);
     assert.ok(layout.some((o) => Math.abs(track.wrap(o.idx - i + 20) - 20) <= 20), `layout entry at d=${e.d} produced nothing`);
   }
 
-  const allowed = new Set(['tyre', 'oil', 'boost', 'cone', 'coin']);
+  const allowed = new Set(['tyre', 'boost', 'cone', 'coin']);
   for (const o of layout) assert.ok(allowed.has(o.type), `unexpected obstacle type ${o.type}`);
   for (const type of allowed) assert.ok(layout.some((o) => o.type === type), `no ${type} on the course`);
 });
@@ -57,7 +57,7 @@ test('both AI lanes stay on the road and steer clear of every hazard', () => {
     assert.equal(lanes.length, track.n);
     for (let i = 0; i < track.n; i++) assert.ok(Math.abs(lanes[i]) <= HW - 8, `lane off the road at ${i}`);
     for (const o of layout) {
-      if (o.type !== 'tyre' && o.type !== 'oil' && o.type !== 'cone') continue;
+      if (o.type !== 'tyre' && o.type !== 'cone') continue;
       const clearance = Math.abs(lanes[o.idx] - o.lat) - o.r - g.CAR_BODY_RADIUS;
       assert.ok(clearance >= 0, `${o.type} at sample ${o.idx}: lane ${lanes[o.idx].toFixed(1)}, lat ${o.lat}`);
     }
@@ -81,13 +81,10 @@ test('coins are for the player only, and come back after a while', () => {
   assert.equal(obs.collide(carOn(coin, { isPlayer: true })).length, 1, 'respawned');
 });
 
-test('oil spins the car out once, then has a cooldown', () => {
-  const obs = new g.Obstacles(track);
-  const oil = first(obs, 'oil');
-  const car = carOn(oil);
-  assert.equal(obs.collide(car)[0].type, 'oil');
-  assert.ok(car.spinTimer > 0);
-  assert.equal(obs.collide(car).length, 0, 'no double spin while sliding through');
+// Bananas are now the only slippery hazard, so the course must not have any oil left on it.
+test('the oil slick is gone from the course', () => {
+  assert.ok(!g.OBSTACLE_LAYOUT.some((e) => e.type === 'oil'), 'no oil in the layout');
+  assert.ok(!layout.some((o) => o.type === 'oil'), 'no oil placed on the track');
 });
 
 test('boost pads give a timed boost', () => {
